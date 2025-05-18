@@ -18,7 +18,7 @@ def send_2fa_code():
     message = (
         "🔑 *New Authentication Code Received*\n\n"
         "You have received a new authentication code.\n\n"
-        "Code:"
+        "Code: "
         f"`{current_code}`\n\n"
         "*This code is valid for the next 10 minutes. Please use it promptly.*"
     )
