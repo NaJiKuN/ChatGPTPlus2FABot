@@ -12,4 +12,4 @@ services:
       - key: SECRET_KEY
         value: ZV3YUXYVPOZSUOT43SKVDGFFVWBZXOVI
       - key: CHAT_ID
-        value: -4985579920
+        value: -1002329495586
