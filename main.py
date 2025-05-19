@@ -29,7 +29,7 @@ def send_2fa_code(context: CallbackContext):
 
 Code: `{current_code}`
 
-Valid until: {expiry_time.strftime('%H:%M:%S')} UTC
+Valid until: {expiry_time.strftime('%H+3:%M:%S')} UTC
         """
         
         context.bot.send_message(
@@ -45,7 +45,7 @@ def run_bot():
     dp = updater.dispatcher
     
     dp.add_handler(CommandHandler("start", 
-        lambda u,c: u.message.reply_text("🤖 2FA Bot is active!")))
+        lambda u,c: u.message.reply_text("✅ 2FA Bot is active!")))
     
     job_queue = updater.job_queue
     job_queue.run_repeating(send_2fa_code, interval=600, first=0)
