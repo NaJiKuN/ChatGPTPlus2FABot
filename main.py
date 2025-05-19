@@ -1,25 +1,28 @@
 import os
-import time
+import threading
 import pyotp
-from telegram import Bot, Update
+from telegram import Bot
 from telegram.ext import Updater, CommandHandler, CallbackContext
 from datetime import datetime, timedelta
+from flask import Flask, Response
 
 # Configuration
 BOT_TOKEN = "8119053401:AAHuqgTkiq6M8rT9VSHYEnIl96BHt9lXIZM"
 GROUP_CHAT_ID = -1002329495586
 TOTP_SECRET = "ZV3YUXYVPOZSUOT43SKVDGFFVWBZXOVI"
+PORT = int(os.environ.get('PORT', 10000))  # Default to 10000 if not set
 
-# Initialize the bot and TOTP
-bot = Bot(token=BOT_TOKEN)
-totp = pyotp.TOTP(TOTP_SECRET)
+# Initialize Flask app
+app = Flask(__name__)
+
+@app.route('/')
+def health_check():
+    return Response("2FA Bot is running", status=200)
 
 def send_2fa_code(context: CallbackContext):
-    # Generate current code
-    current_code = totp.now()
+    current_code = pyotp.TOTP(TOTP_SECRET).now()
     expiry_time = datetime.now() + timedelta(minutes=10)
     
-    # Format the message with copyable code
     message = f"""
 🔑 *New Authentication Code Received*
 
@@ -30,35 +33,32 @@ You have received a new authentication code.
 This code is valid until *{expiry_time.strftime('%H:%M:%S')}* (UTC). Please use it promptly.
     """
     
-    # Send the message to the group
-    context.bot.send_message(
-        chat_id=GROUP_CHAT_ID,
-        text=message,
-        parse_mode="Markdown"
-    )
+    try:
+        context.bot.send_message(
+            chat_id=GROUP_CHAT_ID,
+            text=message,
+            parse_mode="Markdown"
+        )
+    except Exception as e:
+        print(f"Error sending message: {e}")
 
-def start(update: Update, context: CallbackContext):
-    update.message.reply_text("2FA Code Bot is running. Codes will be sent to the group every 10 minutes.")
-
-def main():
-    # Create the Updater and pass it your bot's token.
+def run_bot():
     updater = Updater(BOT_TOKEN, use_context=True)
-
-    # Get the dispatcher to register handlers
     dp = updater.dispatcher
-
-    # Add command handler
-    dp.add_handler(CommandHandler("start", start))
-
-    # Schedule the 2FA code to be sent every 10 minutes
+    dp.add_handler(CommandHandler("start", lambda u,c: u.message.reply_text("2FA Bot is running!")))
+    
     job_queue = updater.job_queue
     job_queue.run_repeating(send_2fa_code, interval=600, first=0)
-
-    # Start the Bot
+    
+    print("Bot started successfully")
     updater.start_polling()
-
-    # Run the bot until you press Ctrl-C
     updater.idle()
 
 if __name__ == '__main__':
-    main()
+    # Start bot in a separate thread
+    bot_thread = threading.Thread(target=run_bot)
+    bot_thread.daemon = True
+    bot_thread.start()
+    
+    # Run Flask app
+    app.run(host='0.0.0.0', port=PORT)
