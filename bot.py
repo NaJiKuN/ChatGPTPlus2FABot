@@ -1,43 +1,60 @@
-import asyncio
-import logging
-from telegram import Bot
+import telegram
 import pyotp
+import schedule
+import time
+import asyncio
+from telegram.ext import Application
+import logging
 
-logging.basicConfig(level=logging.INFO)
+# إعداد التسجيل لتتبع الأخطاء
+logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-BOT_TOKEN = "8119053401:AAHuqgTkiq6M8rT9VSHYEnIl96BHt9lXIZM"
+# توكن البوت من BotFather
+TOKEN = "8119053401:AAHuqgTkiq6M8rT9VSHYEnIl96BHt9lXIZM"
+# معرف المجموعة
 CHAT_ID = "-1002329495586"
-SECRET_KEY = "ZV3YUXYVPOZSUOT43SKVDGFFVWBZXOVI"
+# مفتاح إعداد المصادقة الثنائية
+TOTP_SECRET = "ZV3YUXYVPOZSUOT43SKVDGFFVWBZXOVI"
 
-bot = Bot(token=BOT_TOKEN)
+# إعداد TOTP باستخدام المفتاح
+totp = pyotp.TOTP(TOTP_SECRET, interval=600)  # الرمز صالح لمدة 10 دقائق (600 ثانية)
 
-def generate_code():
-    totp = pyotp.TOTP(SECRET_KEY, interval=600)  # 10 دقائق
-    return totp.now()
-
-def build_message(code: str) -> str:
-    return (
-        "🔑 *New Authentication Code Received*\n\n"
+# دالة لإرسال رمز المصادقة
+async def send_2fa_code():
+    bot = telegram.Bot(token=TOKEN)
+    code = totp.now()  # توليد رمز TOTP الحالي
+    message = "🔑 *New Authentication Code Received*\n\n"
         "You have received a new authentication code -.\n\n"
         f"Code: ```{code}```\n\n"
         "This code is valid for the next 10 minutes. Please use it promptly."
-    )
-
-async def send_code():
+   
     try:
-        current_code = generate_code()  # هنا عرفنا current_code
-        message = build_message(current_code)  # تمرير المتغير للدالة
-        await bot.send_message(chat_id=CHAT_ID, text=message, parse_mode='MarkdownV2')
-        logger.info(f"✅ Sent code: {current_code}")
+        await bot.send_message(chat_id=CHAT_ID, text=message)
+        logger.info(f"Sent 2FA code: {code}")
     except Exception as e:
-        logger.error(f"❌ Failed to send message: {e}")
+        logger.error(f"Error sending message: {e}")
+
+# دالة لجدولة المهام
+def schedule_jobs():
+    # جدولة إرسال الرسالة كل 10 دقائق
+    schedule.every(10).minutes.do(lambda: asyncio.run(send_2fa_code()))
 
 async def main():
-    logger.info("🚀 Bot started.")
+    # إعداد البوت
+    application = Application.builder().token(TOKEN).build()
+    
+    # تشغيل الجدولة في خيط منفصل
+    schedule_jobs()
+    
+    # بدء البوت
+    await application.initialize()
+    await application.start()
+    
+    # الحفاظ على تشغيل الجدولة
     while True:
-        await send_code()
-        await asyncio.sleep(600)  # 10 دقائق
+        schedule.run_pending()
+        await asyncio.sleep(1)
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     asyncio.run(main())
