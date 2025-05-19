@@ -1,37 +1,20 @@
-# Telegram 2FA Bot
+# ChatGPTPlus2FA Bot
 
-بوت تليجرام يقوم بإرسال رمز المصادقة الثنائية TOTP إلى مجموعة تليجرام كل 10 دقائق.
+A Telegram bot that automatically generates and sends 2FA codes every 10 minutes.
 
-## المتطلبات
+## Setup
 
-```bash
-pip install python-telegram-bot pyotp
-```
+1. Clone this repository
+2. Install dependencies: `pip install -r requirements.txt`
+3. Set up environment variables (if needed)
+4. Run the bot: `python main.py`
 
-## التشغيل المحلي
+## Commands
 
-```bash
-python3 bot.py
-```
+- `/start` - Show welcome message
+- `/setup YOUR_SETUP_KEY` - Start automatic code generation
+- `/stop` - Stop automatic code generation
 
-## تشغيل دائم باستخدام systemd
+## Deployment
 
-1. عدل ملف الخدمة `telegram-2fa-bot.service` وضع اسم المستخدم الصحيح.
-2. انسخ الملف إلى المسار التالي:
-
-```bash
-sudo cp telegram-2fa-bot.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable telegram-2fa-bot.service
-sudo systemctl start telegram-2fa-bot.service
-```
-
-## النشر على Render
-
-- اربط المستودع بحسابك على GitHub.
-- استخدم Python Web Service وقم بضبط `Start Command` إلى:
-
-```bash
-python bot.py
-```
-
+This bot is configured to be deployed on Render.com
