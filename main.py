@@ -5,6 +5,7 @@ from telegram import Bot
 from telegram.ext import Updater, CommandHandler, CallbackContext
 from datetime import datetime, timedelta
 from flask import Flask, Response
+from werkzeug.utils import quote as url_quote
 
 # Configuration
 BOT_TOKEN = "8119053401:AAHuqgTkiq6M8rT9VSHYEnIl96BHt9lXIZM"
