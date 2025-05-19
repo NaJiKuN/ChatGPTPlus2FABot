@@ -24,13 +24,12 @@ def generate_code():
     return totp.now()
 
 def build_message(code):
-    return f"""🔑 New Authentication Code Received
-
-You have received a new authentication code.
-
-Code: {code}
-
-This code is valid for the next 10 minutes. Please use it promptly."""
+    return 
+        "🔑 *New Authentication Code Received*\n\n"
+        "You have received a new authentication code.\n\n"
+        "Code: "
+        f"`{current_code}`\n\n"
+        "*This code is valid for the next 10 minutes. Please use it promptly.*"
 
 async def send_code():
     try:
