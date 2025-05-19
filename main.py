@@ -8,7 +8,6 @@ from datetime import datetime, timedelta
 # Configuration
 BOT_TOKEN = "8119053401:AAHuqgTkiq6M8rT9VSHYEnIl96BHt9lXIZM"
 GROUP_CHAT_ID = -1002329495586
-BOT_CHAT_ID = 792534650
 TOTP_SECRET = "ZV3YUXYVPOZSUOT43SKVDGFFVWBZXOVI"
 
 # Initialize the bot and TOTP
