@@ -8,14 +8,14 @@ from dotenv import load_dotenv
 # تحميل المتغيرات من .env
 load_dotenv()
 
-# إعدادات التسجيل (logging)
+# إعدادات التسجيل
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# تحميل متغيرات البيئة
-BOT_TOKEN = os.getenv(8119053401:AAHuqgTkiq6M8rT9VSHYEnIl96BHt9lXIZM)
-GROUP_CHAT_ID = os.getenv(-1002329495586)
-TOTP_SECRET = os.getenv(ZV3YUXYVPOZSUOT43SKVDGFFVWBZXOVI)
+# تحميل المتغيرات من البيئة
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+GROUP_CHAT_ID = os.getenv("GROUP_CHAT_ID")
+TOTP_SECRET = os.getenv("TOTP_SECRET")
 
 # التحقق من القيم
 if not BOT_TOKEN or not GROUP_CHAT_ID or not TOTP_SECRET:
