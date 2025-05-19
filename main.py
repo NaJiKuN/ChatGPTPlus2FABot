@@ -30,12 +30,8 @@ def send_2fa_code():
         "parse_mode": "Markdown"
     }
     response = requests.post(url, data=payload)
-        if response.status_code != 200:
-            print("❌ فشل الإرسال:", response.status_code, response.text)
-        else:
-            print(f"✅ تم إرسال الكود: {current_code}")
-    except Exception as e:
-        print("⚠️ حدث خطأ:", e)
+    print(f"تم الإرسال: {current_code} | حالة الطلب: {response.status_code}")
+
 def main():
     while True:
         send_2fa_code()
