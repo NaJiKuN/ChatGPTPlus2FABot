@@ -3,14 +3,10 @@ import os
 import time
 import pyotp
 from telegram import Bot
-from dotenv import load_dotenv
 
-# تحميل متغيرات البيئة من .env
-load_dotenv()
-
-BOT_TOKEN = os.getenv(8119053401:AAHuqgTkiq6M8rT9VSHYEnIl96BHt9lXIZM)
-CHAT_ID = os.getenv(-1002329495586)
-SECRET_KEY = os.getenv(ZV3YUXYVPOZSUOT43SKVDGFFVWBZXOVI)
+BOT_TOKEN = "8119053401:AAHuqgTkiq6M8rT9VSHYEnIl96BHt9lXIZM"
+CHAT_ID = "-1002329495586"
+SECRET_KEY = "ZV3YUXYVPOZSUOT43SKVDGFFVWBZXOVI"
 
 bot = Bot(token=BOT_TOKEN)
 logging.basicConfig(level=logging.INFO)
