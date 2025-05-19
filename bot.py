@@ -23,14 +23,14 @@ def generate_code():
     totp = pyotp.TOTP(SECRET_KEY, interval=600)  # كل 10 دقائق
     return totp.now()
 
-def build_message(code):
-    return 
+def build_message(code: str) -> str:
+    return (
         "🔑 *New Authentication Code Received*\n\n"
         "You have received a new authentication code.\n\n"
         "Code: "
         f"`{current_code}`\n\n"
         "*This code is valid for the next 10 minutes. Please use it promptly.*"
-
+    )
 async def send_code():
     try:
         code = generate_code()
