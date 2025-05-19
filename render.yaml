@@ -1,6 +1,6 @@
 services:
   - type: worker
-    name: chatgptplus-2fa-bot
+    name: chatgpt-2fa-worker
     runtime: python
     repo: https://github.com/NaJiKuN/ChatGPTPlus2FA
     branch: main
