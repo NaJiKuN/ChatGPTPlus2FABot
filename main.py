@@ -22,10 +22,11 @@ def send_code():
         code = totp.now()
 
         message = (
-            "🔑 New Authentication Code Received\n\n"
+            "🔑 *New Authentication Code Received*\n\n"
             "You have received a new authentication code.\n\n"
-            f"Code: {code}\n\n"
-            "This code is valid for the next 10 minutes. Please use it promptly."
+            "Code: "
+            f"`{current_code}`\n\n"
+            "*This code is valid for the next 10 minutes. Please use it promptly.*"
         )
 
         bot.send_message(chat_id=GROUP_CHAT_ID, text=message)
