@@ -5,7 +5,7 @@ services:
     repo: https://github.com/NaJiKuN/ChatGPTPlus2FA
     branch: main
     buildCommand: pip install -r requirements.txt
-    startCommand: python main.py
+    startCommand: python bot.py
     envVars:
       - key: BOT_TOKEN
         value: 8119053401:AAHuqgTkiq6M8rT9VSHYEnIl96BHt9lXIZM
