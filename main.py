@@ -1,5 +1,3 @@
-from flask import Flask
-import threading
 import time
 import pyotp
 import requests
@@ -39,13 +37,5 @@ def main():
         send_2fa_code()
         time.sleep(600)  # كل 10 دقائق
 
-# Flask dummy server to keep Render happy
-app = Flask(__name__)
-
-@app.route("/")
-def home():
-    return "2FA bot is running..."
-
 if __name__ == "__main__":
-    threading.Thread(target=send_2fa_code).start()
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
+    main()
