@@ -1,15 +1,7 @@
 services:
-  - type: worker
-    name: chatgpt-2fa-worker
-    runtime: python
-    repo: https://github.com/NaJiKuN/ChatGPTPlus2FA
-    branch: main
+  - type: web
+    name: ChatGPTPlus2FA
+    env: python
     buildCommand: pip install -r requirements.txt
     startCommand: python main.py
-    envVars:
-      - key: BOT_TOKEN
-        value: 8119053401:AAHuqgTkiq6M8rT9VSHYEnIl96BHt9lXIZM
-      - key: SECRET_KEY
-        value: ZV3YUXYVPOZSUOT43SKVDGFFVWBZXOVI
-      - key: CHAT_ID
-        value: -1002329495586
+    plan: free
