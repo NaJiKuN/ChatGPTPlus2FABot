@@ -1,23 +1,24 @@
 import os
+import threading
 import pyotp
-from telegram import Update
+from telegram import Bot
 from telegram.ext import Updater, CommandHandler, CallbackContext
 from datetime import datetime, timedelta
+from flask import Flask, Response
 
-# التكوينات
+app = Flask(__name__)
+
+# التكوينات - يُفضل وضعها في متغيرات البيئة
 BOT_TOKEN = os.getenv('BOT_TOKEN', "8119053401:AAHuqgTkiq6M8rT9VSHYEnIl96BHt9lXIZM")
 GROUP_CHAT_ID = int(os.getenv('GROUP_CHAT_ID', "-1002329495586"))
 TOTP_SECRET = os.getenv('TOTP_SECRET', "ZV3YUXYVPOZSUOT43SKVDGFFVWBZXOVI")
-ADMIN_IDS = [792534650]  # أرقام معرفات المشرفين
+PORT = int(os.environ.get('PORT', 10000))
 
-# حالة البوت
-bot_active = True
+@app.route('/')
+def health_check():
+    return Response("✅ 2FA Bot is running", status=200)
 
 def send_2fa_code(context: CallbackContext):
-    global bot_active
-    if not bot_active:
-        return
-        
     try:
         current_code = pyotp.TOTP(TOTP_SECRET).now()
         expiry_time = datetime.now() + timedelta(minutes=10)
@@ -38,36 +39,21 @@ Valid until: {expiry_time.strftime('%H:%M:%S')} UTC
     except Exception as e:
         print(f"⚠️ Error: {str(e)}")
 
-def start(update: Update, context: CallbackContext):
-    global bot_active
-    bot_active = True
-    update.message.reply_text("🤖 Bot is running! Use /stop to pause code sending.")
-
-def stop(update: Update, context: CallbackContext):
-    global bot_active
-    user_id = update.effective_user.id
+def run_bot():
+    # الطريقة الحديثة للإصدار 20.0+
+    application = Updater(BOT_TOKEN).application
     
-    if user_id in ADMIN_IDS:
-        bot_active = False
-        update.message.reply_text("⏸️ Bot paused. No more codes will be sent. Use /start to resume.")
-    else:
-        update.message.reply_text("🚫 You are not authorized to stop this bot.")
-
-def main():
-    # استخدام الإصدار الجديد من python-telegram-bot (v20.x)
-    updater = Updater(BOT_TOKEN)
+    application.add_handler(CommandHandler("start", 
+        lambda u,c: u.message.reply_text("🤖 2FA Bot is active!")))
     
-    dp = updater.dispatcher
-    dp.add_handler(CommandHandler("start", start))
-    dp.add_handler(CommandHandler("stop", stop))
-    
-    job_queue = updater.job_queue
+    job_queue = application.job_queue
     job_queue.run_repeating(send_2fa_code, interval=600, first=0)
     
     print("🟢 Bot started successfully")
-    updater.start_polling()
-    updater.idle()
+    application.run_polling()
 
 if __name__ == '__main__':
     print("🚀 Starting application...")
-    main()
+    bot_thread = threading.Thread(target=run_bot, daemon=True)
+    bot_thread.start()
+    app.run(host='0.0.0.0', port=PORT, use_reloader=False)
