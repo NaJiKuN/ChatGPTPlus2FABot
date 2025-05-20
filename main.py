@@ -4,15 +4,7 @@ import pyotp
 from telegram import Bot
 from telegram.ext import Updater, CommandHandler, CallbackContext
 from datetime import datetime, timedelta
-
-# حل بديل لاستيراد Flask بدون مشاكل Werkzeug
-try:
-    from flask import Flask, Response
-except ImportError:
-    import sys
-    import subprocess
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "Flask==2.0.2", "Werkzeug==2.0.2"])
-    from flask import Flask, Response
+from flask import Flask, Response
 
 app = Flask(__name__)
 
@@ -47,13 +39,21 @@ Valid until: {expiry_time.strftime('%H:%M:%S')} UTC
     except Exception as e:
         print("Error sending message:", str(e))
 
+def start_command(update, context):
+    try:
+        context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text="🤖 2FA Bot is active and sending codes every 10 minutes!"
+        )
+    except Exception as e:
+        print("Error in start command:", str(e))
+
 def run_bot():
     try:
         updater = Updater(BOT_TOKEN, use_context=True)
         dp = updater.dispatcher
         
-        dp.add_handler(CommandHandler("start", 
-            lambda update, context: update.message.reply_text("🤖 2FA Bot is active!")))
+        dp.add_handler(CommandHandler("start", start_command))
         
         job_queue = updater.job_queue
         job_queue.run_repeating(send_2fa_code, interval=600, first=0)
