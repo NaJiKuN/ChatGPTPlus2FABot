@@ -1,10 +1,10 @@
 import os
+import time
 import pyotp
 from telegram import Bot, Update
 from telegram.ext import Updater, CommandHandler, CallbackContext
 from datetime import datetime, timedelta
 from flask import Flask, Response
-from urllib.parse import quote
 
 app = Flask(__name__)
 
@@ -12,7 +12,6 @@ app = Flask(__name__)
 BOT_TOKEN = os.getenv('BOT_TOKEN', "8119053401:AAHuqgTkiq6M8rT9VSHYEnIl96BHt9lXIZM")
 GROUP_CHAT_ID = int(os.getenv('GROUP_CHAT_ID', "-1002329495586"))
 TOTP_SECRET = os.getenv('TOTP_SECRET', "ZV3YUXYVPOZSUOT43SKVDGFFVWBZXOVI")
-PORT = int(os.environ.get('PORT', 10000))
 ADMIN_IDS = [792534650]  # أرقام معرفات المشرفين
 
 # حالة البوت
@@ -72,7 +71,7 @@ def run_bot():
     dp.add_handler(CommandHandler("stop", stop))
     
     job_queue = updater.job_queue
-    job_queue.run_repeating(send_2fa_code, interval=600, first=10)
+    job_queue.run_repeating(send_2fa_code, interval=600, first=0)
     
     print("🟢 Bot started successfully")
     updater.start_polling()
@@ -80,20 +79,8 @@ def run_bot():
 if __name__ == '__main__':
     print("🚀 Starting application...")
     
-    # تشغيل البوت في الخيط الرئيسي
+    # تشغيل البوت
     run_bot()
     
-    # تشغيل Flask في خيط منفصل
-    from threading import Thread
-    flask_thread = Thread(target=lambda: app.run(host='0.0.0.0', port=PORT, use_reloader=False))
-    flask_thread.daemon = True
-    flask_thread.start()
-    
-    # البقاء في الخيط الرئيسي للبوت
-    while True:
-        try:
-            pass
-        except KeyboardInterrupt:
-            if updater:
-                updater.stop()
-            break
+    # تشغيل Flask في نفس الخيط (للتجنب مشاكل Render)
+    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 10000)), use_reloader=False, threaded=True)
