@@ -19,14 +19,20 @@ def generate_2fa_code():
 def send_2fa_code(context: CallbackContext):
     """Send the 2FA code to the group"""
     code = generate_2fa_code()
-    message = f"""🔑 New Authentication Code Received
+   # Create a keyboard with the code as a button for easy copying
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton(text=f"📋 Copy Code: {code}", callback_data=code)]
+    ])
+    
+    message = f"""
+🔑 New Authentication Code Received
 
 You have received a new authentication code.
 
-Code: <code>{code}</code> (click to copy)
+Code: {code}
 
-This code is valid for the next 10 minutes. Please use it promptly."""
-
+This code is valid until {expiry_time}. Please use it promptly.
+"""
     context.bot.send_message(
         chat_id=GROUP_CHAT_ID,
         text=message,
