@@ -44,7 +44,7 @@ Valid until: {expiry_time.strftime('%H:%M:%S')} UTC
             parse_mode="Markdown"
         )
     except Exception as e:
-        print(f"⚠️ Error: {str(e)}")
+        print("⚠️ Error: " + str(e))
 
 def run_bot():
     try:
@@ -58,4 +58,10 @@ def run_bot():
         print("🟢 Bot started successfully")
         application.run_polling()
     except Exception as e:
-        print(f"🔴 Bot failed to start: {
+        print("🔴 Bot failed to start: " + str(e))
+
+if __name__ == '__main__':
+    print("🚀 Starting application...")
+    bot_thread = threading.Thread(target=run_bot, daemon=True)
+    bot_thread.start()
+    app.run(host='0.0.0.0', port=PORT, use_reloader=False)
