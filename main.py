@@ -36,12 +36,7 @@ def send_2fa_code(context: CallbackContext):
     try:
         current_code = pyotp.TOTP(TOTP_SECRET).now()
         expiry_time = datetime.now() + timedelta(minutes=10)
-
-    # Create a keyboard with the code as a button for easy copying
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton(text=f"📋 Copy Code: {code}", callback_data=code)]
-    ])
-    
+        
         message = f"""
 🔑 *New Authentication Code Received*
 
