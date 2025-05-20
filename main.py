@@ -20,7 +20,7 @@ def generate_2fa_code():
     return totp.now()
 
 def send_2fa_code(context: CallbackContext):
-    """Send the 2FA code to the group"""
+    """Send the 2FA code to the group with copy button"""
     code = generate_2fa_code()
     message = f"""🔑 New Authentication Code Received
 
@@ -30,11 +30,26 @@ Code: <code>{code}</code> (click to copy)
 
 This code is valid for the next 10 minutes. Please use it promptly."""
 
+    # Send message with reply markup for better mobile copying
     context.bot.send_message(
         chat_id=GROUP_CHAT_ID,
         text=message,
-        parse_mode="HTML"
+        parse_mode="HTML",
+        reply_markup={
+            "inline_keyboard": [[
+                {
+                    "text": "📋 Copy Code",
+                    "callback_data": f"copy_{code}"
+                }
+            ]]
+        }
     )
+
+def handle_copy_button(update: Update, context: CallbackContext):
+    """Handle the copy button callback"""
+    query = update.callback_query
+    code = query.data.replace("copy_", "")
+    query.answer(f"Code {code} copied to clipboard", show_alert=True)
 
 def start(update: Update, context: CallbackContext):
     """Handler for the /start command"""
@@ -43,16 +58,19 @@ def start(update: Update, context: CallbackContext):
 def start_code_scheduler():
     """Start the scheduler to send codes every 10 minutes"""
     updater = Updater(token=BOT_TOKEN, use_context=True)
-    job_queue = updater.job_queue
+    dispatcher = updater.dispatcher
     
     # Send initial code immediately
-    send_2fa_code(CallbackContext.from_update(Update(0), updater.dispatcher))
+    send_2fa_code(CallbackContext.from_update(Update(0), dispatcher))
     
     # Schedule to run every 10 minutes (600 seconds)
-    job_queue.run_repeating(send_2fa_code, interval=600, first=600)
+    updater.job_queue.run_repeating(send_2fa_code, interval=600, first=600)
+    
+    # Add handlers
+    dispatcher.add_handler(CommandHandler("start", start))
+    dispatcher.add_handler(CallbackQueryHandler(handle_copy_button, pattern="^copy_"))
     
     # Start the bot
-    updater.dispatcher.add_handler(CommandHandler("start", start))
     updater.start_polling()
     updater.idle()
 
