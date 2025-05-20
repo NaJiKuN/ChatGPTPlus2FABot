@@ -1,8 +1,7 @@
 import os
-import threading
 import pyotp
 from telegram import Bot, Update
-from telegram.ext import Updater, CommandHandler, CallbackContext, MessageHandler, Filters
+from telegram.ext import Updater, CommandHandler, CallbackContext
 from datetime import datetime, timedelta
 from flask import Flask, Response
 from urllib.parse import quote
@@ -14,11 +13,11 @@ BOT_TOKEN = os.getenv('BOT_TOKEN', "8119053401:AAHuqgTkiq6M8rT9VSHYEnIl96BHt9lXI
 GROUP_CHAT_ID = int(os.getenv('GROUP_CHAT_ID', "-1002329495586"))
 TOTP_SECRET = os.getenv('TOTP_SECRET', "ZV3YUXYVPOZSUOT43SKVDGFFVWBZXOVI")
 PORT = int(os.environ.get('PORT', 10000))
-ADMIN_IDS = [792534650]  # أرقام معرفات المشرفين الذين يمكنهم إيقاف البوت
+ADMIN_IDS = [792534650]  # أرقام معرفات المشرفين
 
 # حالة البوت
 bot_active = True
-job_queue = None
+updater = None
 
 @app.route('/')
 def health_check():
@@ -50,6 +49,8 @@ Valid until: {expiry_time.strftime('%H:%M:%S')} UTC
         print(f"⚠️ Error: {str(e)}")
 
 def start(update: Update, context: CallbackContext):
+    global bot_active
+    bot_active = True
     update.message.reply_text("🤖 Bot is running! Use /stop to pause code sending.")
 
 def stop(update: Update, context: CallbackContext):
@@ -63,8 +64,7 @@ def stop(update: Update, context: CallbackContext):
         update.message.reply_text("🚫 You are not authorized to stop this bot.")
 
 def run_bot():
-    global job_queue
-    
+    global updater
     updater = Updater(BOT_TOKEN, use_context=True)
     dp = updater.dispatcher
     
@@ -72,14 +72,28 @@ def run_bot():
     dp.add_handler(CommandHandler("stop", stop))
     
     job_queue = updater.job_queue
-    job_queue.run_repeating(send_2fa_code, interval=600, first=10)  # كل 10 دقائق
+    job_queue.run_repeating(send_2fa_code, interval=600, first=10)
     
     print("🟢 Bot started successfully")
     updater.start_polling()
-    updater.idle()
 
 if __name__ == '__main__':
     print("🚀 Starting application...")
-    bot_thread = threading.Thread(target=run_bot, daemon=True)
-    bot_thread.start()
-    app.run(host='0.0.0.0', port=PORT, use_reloader=False)
+    
+    # تشغيل البوت في الخيط الرئيسي
+    run_bot()
+    
+    # تشغيل Flask في خيط منفصل
+    from threading import Thread
+    flask_thread = Thread(target=lambda: app.run(host='0.0.0.0', port=PORT, use_reloader=False))
+    flask_thread.daemon = True
+    flask_thread.start()
+    
+    # البقاء في الخيط الرئيسي للبوت
+    while True:
+        try:
+            pass
+        except KeyboardInterrupt:
+            if updater:
+                updater.stop()
+            break
