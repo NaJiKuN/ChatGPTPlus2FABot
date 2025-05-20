@@ -1,64 +1,107 @@
 import os
-import time
+import threading
+import logging
 import pyotp
-from telegram import Bot, Update
+from telegram import Bot
 from telegram.ext import Updater, CommandHandler, CallbackContext
+from datetime import datetime, timedelta
+from flask import Flask, Response, request
 
-# Configuration
-BOT_TOKEN = "8119053401:AAHuqgTkiq6M8rT9VSHYEnIl96BHt9lXIZM"
-GROUP_CHAT_ID = -1002329495586
-TOTP_SECRET = "ZV3YUXYVPOZSUOT43SKVDGFFVWBZXOVI"
+# إعدادات التسجيل
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
 
-# Initialize TOTP generator
-totp = pyotp.TOTP(TOTP_SECRET)
+app = Flask(__name__)
 
-def generate_2fa_code():
-    """Generate a new 2FA code"""
-    return totp.now()
+# التكوينات - يُفضل استخدام متغيرات البيئة في الإنتاج
+BOT_TOKEN = os.getenv('BOT_TOKEN', "8119053401:AAHuqgTkiq6M8rT9VSHYEnIl96BHt9lXIZM")
+GROUP_CHAT_ID = int(os.getenv('GROUP_CHAT_ID', "-1002329495586"))
+TOTP_SECRET = os.getenv('TOTP_SECRET', "ZV3YUXYVPOZSUOT43SKVDGFFVWBZXOVI")
+PORT = int(os.environ.get('PORT', 10000))
+API_SECRET = os.getenv('API_SECRET', "your-secret-key-here")
+
+@app.before_request
+def check_auth():
+    if request.path != '/' and request.headers.get('X-API-KEY') != API_SECRET:
+        return Response("Unauthorized", 401)
+
+@app.route('/')
+def health_check():
+    return Response("✅ 2FA Bot is running and healthy", status=200)
 
 def send_2fa_code(context: CallbackContext):
-    """Send the 2FA code to the group"""
-    code = generate_2fa_code()
-   # Create a keyboard with the code as a button for easy copying
+    try:
+        current_code = pyotp.TOTP(TOTP_SECRET).now()
+        expiry_time = datetime.now() + timedelta(minutes=10)
+
+    # Create a keyboard with the code as a button for easy copying
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton(text=f"📋 Copy Code: {code}", callback_data=code)]
     ])
     
-    message = f"""
-🔑 New Authentication Code Received
+        message = f"""
+🔑 *New Authentication Code Received*
 
-You have received a new authentication code.
+Code: `{current_code}`
 
-Code: {code}
+⏳ Valid until: {expiry_time.strftime('%H:%M:%S')} UTC
+        """
+        
+        context.bot.send_message(
+            chat_id=GROUP_CHAT_ID,
+            text=message,
+            parse_mode="Markdown"
+        )
+        logger.info(f"Sent 2FA code: {current_code}")
+    except Exception as e:
+        logger.error(f"Error sending message: {e}")
 
-This code is valid until {expiry_time}. Please use it promptly.
-"""
-    context.bot.send_message(
-        chat_id=GROUP_CHAT_ID,
-        text=message,
-        parse_mode="HTML"
-    )
+def start_command(update, context):
+    try:
+        context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text="🤖 2FA Bot is active and sending codes every 10 minutes!"
+        )
+        logger.info(f"Responded to start command from {update.effective_chat.id}")
+    except Exception as e:
+        logger.error(f"Error in start command: {e}")
 
-def start(update: Update, context: CallbackContext):
-    """Handler for the /start command"""
-    update.message.reply_text("Bot is running and will send 2FA codes every 10 minutes.")
+def run_bot():
+    try:
+        updater = Updater(BOT_TOKEN, use_context=True)
+        dp = updater.dispatcher
+        
+        dp.add_handler(CommandHandler("start", start_command))
+        
+        job_queue = updater.job_queue
+        job_queue.run_repeating(
+            send_2fa_code,
+            interval=600,  # كل 10 دقائق
+            first=10       # يبدأ بعد 10 ثواني
+        )
+        
+        logger.info("🟢 Bot started successfully")
+        updater.start_polling()
+        updater.idle()
+    except Exception as e:
+        logger.error(f"🔴 Failed to start bot: {e}")
 
-def start_code_scheduler():
-    """Start the scheduler to send codes every 10 minutes"""
-    updater = Updater(BOT_TOKEN, use_context=True)
-    job_queue = updater.job_queue
+if __name__ == '__main__':
+    logger.info("🚀 Starting application...")
     
-    # Send initial code immediately
-    send_2fa_code(CallbackContext.from_update(Update(0), updater.dispatcher))
+    # تشغيل البوت في خيط منفصل
+    bot_thread = threading.Thread(target=run_bot, daemon=True)
+    bot_thread.start()
     
-    # Schedule to run every 10 minutes (600 seconds)
-    job_queue.run_repeating(send_2fa_code, interval=600, first=0)
-    
-    # Start the bot
-    updater.dispatcher.add_handler(CommandHandler("start", start))
-    updater.start_polling()
-    updater.idle()
-
-if __name__ == "__main__":
-    print("Starting 2FA Telegram Bot...")
-    start_code_scheduler()
+    # تشغيل تطبيق Flask
+    try:
+        if os.environ.get('ENV') != 'production':
+            app.run(host='0.0.0.0', port=PORT)
+        else:
+            # في الإنتاج، سيتم تشغيل التطبيق عبر gunicorn
+            pass
+    except Exception as e:
+        logger.error(f"🔴 Failed to start Flask app: {e}")
