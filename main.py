@@ -1,17 +1,11 @@
 import os
-import sys
+import threading
 import logging
 import pyotp
-import argparse
 from telegram import ParseMode
 from telegram.ext import Updater, CommandHandler, CallbackContext
 from datetime import datetime, timedelta
 from flask import Flask, Response
-
-# إعداد المحلل لمعرفة وضع التشغيل
-parser = argparse.ArgumentParser()
-parser.add_argument('--mode', choices=['web', 'bot'], default='web')
-args = parser.parse_args()
 
 # إعدادات التسجيل
 logging.basicConfig(
@@ -22,14 +16,25 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
-# التكوينات
+# التكوينات - تأكد من تعيينها في متغيرات البيئة
 BOT_TOKEN = os.getenv('BOT_TOKEN')
-GROUP_CHAT_ID = int(os.getenv('GROUP_CHAT_ID'))
+GROUP_CHAT_ID = os.getenv('GROUP_CHAT_ID')
 TOTP_SECRET = os.getenv('TOTP_SECRET')
+
+# التحقق من المتغيرات
+if not all([BOT_TOKEN, GROUP_CHAT_ID, TOTP_SECRET]):
+    logger.error("❌ متغيرات البيئة ناقصة! يلزم تعيين: BOT_TOKEN, GROUP_CHAT_ID, TOTP_SECRET")
+    exit(1)
+
+try:
+    GROUP_CHAT_ID = int(GROUP_CHAT_ID)
+except ValueError:
+    logger.error("❌ GROUP_CHAT_ID يجب أن يكون رقماً صحيحاً")
+    exit(1)
 
 @app.route('/')
 def health_check():
-    return Response("✅ Bot is running", status=200)
+    return Response("✅ البوت يعمل بشكل طبيعي", status=200)
 
 def send_2fa_code(context: CallbackContext):
     try:
@@ -66,17 +71,13 @@ def start_bot():
         
         logger.info("🟢 البوت يعمل الآن")
         updater.start_polling()
-        updater.idle()
     except Exception as e:
         logger.error(f"🔴 فشل تشغيل البوت: {str(e)}")
-        sys.exit(1)
+
+# تشغيل البوت في خيط منفصل
+bot_thread = threading.Thread(target=start_bot, daemon=True)
+bot_thread.start()
 
 if __name__ == '__main__':
-    if args.mode == 'bot':
-        if not all([BOT_TOKEN, GROUP_CHAT_ID, TOTP_SECRET]):
-            logger.error("🔴 متغيرات البيئة ناقصة! يحتاج البوت إلى: BOT_TOKEN, GROUP_CHAT_ID, TOTP_SECRET")
-            sys.exit(1)
-        start_bot()
-    else:
-        PORT = int(os.environ.get('PORT', 10000))
-        app.run(host='0.0.0.0', port=PORT)
+    PORT = int(os.environ.get('PORT', 10000))
+    app.run(host='0.0.0.0', port=PORT)
