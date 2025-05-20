@@ -1,57 +1,61 @@
 import os
 import time
-import pytz
-from datetime import datetime
-import schedule
 import pyotp
-from telegram import Bot, ParseMode
-from telegram.error import TelegramError
+from telegram import Bot, Update
+from telegram.ext import Updater, CommandHandler, CallbackContext
+from threading import Thread
 
-# Bot configuration
+# Configuration
 BOT_TOKEN = "8119053401:AAHuqgTkiq6M8rT9VSHYEnIl96BHt9lXIZM"
-CHAT_ID = -1002329495586  # Group chat ID
-BOT_CHAT_ID = 792534650   # Bot chat ID (optional, for logging)
-TOTP_SECRET = "ZV3YUXYVPOZSUOT43SKVDGFFVWBZXOVI"  # 2FA secret key
+GROUP_CHAT_ID = -1002329495586
+BOT_CHAT_ID = 792534650
+TOTP_SECRET = "ZV3YUXYVPOZSUOT43SKVDGFFVWBZXOVI"
 
-# Initialize the bot
+# Initialize the bot and TOTP generator
 bot = Bot(token=BOT_TOKEN)
+totp = pyotp.TOTP(TOTP_SECRET)
 
-def send_2fa_code():
-    try:
-        # Generate the 2FA code
-        totp = pyotp.TOTP(TOTP_SECRET)
-        code = totp.now()
+def generate_2fa_code():
+    """Generate a new 2FA code"""
+    return totp.now()
 
-        # Format the message with copyable code
-        message = (
-            "🔑 New Authentication Code Received\n\n"
-            "You have received a new authentication code.\n\n"
-            f"Code: <code>{code}</code>\n\n"
-            "This code is valid for the next 10 minutes. Please use it promptly."
-        )
+def send_2fa_code(context: CallbackContext):
+    """Send the 2FA code to the group"""
+    code = generate_2fa_code()
+    message = f"""🔑 New Authentication Code Received
 
-        # Send the message to the group
-        bot.send_message(
-            chat_id=CHAT_ID,
-            text=message,
-            parse_mode=ParseMode.HTML
-        )
-        print(f"Code sent: {code} at {datetime.now(pytz.utc)}")
-    except TelegramError as e:
-        print(f"Error sending message: {e}")
+You have received a new authentication code.
 
-def main():
-    print("Bot is running...")
-    # Schedule the code to be sent every 10 minutes
-    schedule.every(10).minutes.do(send_2fa_code)
+Code: <code>{code}</code>
 
-    # Initial send
-    send_2fa_code()
+This code is valid for the next 10 minutes. Please use it promptly."""
 
-    # Keep the bot running
-    while True:
-        schedule.run_pending()
-        time.sleep(1)
+    context.bot.send_message(
+        chat_id=GROUP_CHAT_ID,
+        text=message,
+        parse_mode="HTML"
+    )
+
+def start(update: Update, context: CallbackContext):
+    """Handler for the /start command"""
+    update.message.reply_text("Bot is running and will send 2FA codes every 10 minutes.")
+
+def start_code_scheduler():
+    """Start the scheduler to send codes every 10 minutes"""
+    updater = Updater(token=BOT_TOKEN, use_context=True)
+    job_queue = updater.job_queue
+    
+    # Send initial code immediately
+    send_2fa_code(CallbackContext.from_update(Update(0), updater.dispatcher))
+    
+    # Schedule to run every 10 minutes (600 seconds)
+    job_queue.run_repeating(send_2fa_code, interval=600, first=600)
+    
+    # Start the bot
+    updater.dispatcher.add_handler(CommandHandler("start", start))
+    updater.start_polling()
+    updater.idle()
 
 if __name__ == "__main__":
-    main()
+    print("Starting 2FA Telegram Bot...")
+    start_code_scheduler()
