@@ -1,6 +1,6 @@
 import os
 import pyotp
-from telegram import Bot, Update
+from telegram import Update
 from telegram.ext import Updater, CommandHandler, CallbackContext
 from datetime import datetime, timedelta
 
@@ -54,9 +54,10 @@ def stop(update: Update, context: CallbackContext):
         update.message.reply_text("🚫 You are not authorized to stop this bot.")
 
 def main():
-    updater = Updater(BOT_TOKEN, use_context=True)
-    dp = updater.dispatcher
+    # استخدام الإصدار الجديد من python-telegram-bot (v20.x)
+    updater = Updater(BOT_TOKEN)
     
+    dp = updater.dispatcher
     dp.add_handler(CommandHandler("start", start))
     dp.add_handler(CommandHandler("stop", stop))
     
