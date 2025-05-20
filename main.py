@@ -26,7 +26,7 @@ def send_2fa_code(context: CallbackContext):
 
 You have received a new authentication code.
 
-Code: <code>{code}</code>
+Code: <code>{code}</code> (click to copy)
 
 This code is valid for the next 10 minutes. Please use it promptly."""
 
