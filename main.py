@@ -1,22 +1,10 @@
 import os
-import sys
-import subprocess
-import threading
 import logging
-
-# محاولة استيراد الحزم المطلوبة، وتثبيتها إذا لزم الأمر
-try:
-    from flask import Flask, Response, request
-    import pyotp
-    from telegram.ext import Updater, CommandHandler, CallbackContext
-    from datetime import datetime, timedelta
-except ImportError:
-    print("Installing required packages...")
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "-r", "requirements.txt"])
-    from flask import Flask, Response, request
-    import pyotp
-    from telegram.ext import Updater, CommandHandler, CallbackContext
-    from datetime import datetime, timedelta
+import pyotp
+from telegram import Bot
+from telegram.ext import Updater, CommandHandler, CallbackContext
+from datetime import datetime, timedelta
+from flask import Flask, Response
 
 # إعدادات التسجيل
 logging.basicConfig(
@@ -32,6 +20,9 @@ BOT_TOKEN = os.getenv('BOT_TOKEN', "8119053401:AAHuqgTkiq6M8rT9VSHYEnIl96BHt9lXI
 GROUP_CHAT_ID = int(os.getenv('GROUP_CHAT_ID', "-1002329495586"))
 TOTP_SECRET = os.getenv('TOTP_SECRET', "ZV3YUXYVPOZSUOT43SKVDGFFVWBZXOVI")
 PORT = int(os.environ.get('PORT', 10000))
+
+# متغير عالمي لتخزين حالة البوت
+bot_running = False
 
 @app.route('/')
 def health_check():
@@ -68,23 +59,39 @@ def start_command(update, context):
         logger.error(f"Error in start command: {e}")
 
 def run_bot():
+    global bot_running
+    if bot_running:
+        logger.warning("Bot is already running!")
+        return
+
     try:
+        bot_running = True
         updater = Updater(BOT_TOKEN, use_context=True)
-        dp = updater.dispatcher
         
-        dp.add_handler(CommandHandler("start", start_command))
+        # إضافة معالج للأخطاء
+        updater.dispatcher.add_error_handler(error_handler)
+        
+        updater.dispatcher.add_handler(CommandHandler("start", start_command))
         
         job_queue = updater.job_queue
-        job_queue.run_repeating(send_2fa_code, interval=600, first=0)
+        job_queue.run_repeating(send_2fa_code, interval=600, first=10)
         
         logger.info("Bot started successfully")
-        updater.start_polling()
+        updater.start_polling(drop_pending_updates=True)
         updater.idle()
     except Exception as e:
         logger.error(f"Failed to start bot: {e}")
+        bot_running = False
+
+def error_handler(update, context):
+    logger.error(f"Error occurred: {context.error}")
 
 if __name__ == '__main__':
     logger.info("Starting application...")
-    bot_thread = threading.Thread(target=run_bot, daemon=True)
-    bot_thread.start()
-    app.run(host='0.0.0.0', port=PORT, use_reloader=False)
+    
+    # بدء البوت مباشرة بدون thread منفصل
+    run_bot()
+    
+    # بدء Flask فقط إذا لم يتم تشغيله من قبل gunicorn
+    if os.environ.get('WERKZEUG_RUN_MAIN') != 'true':
+        app.run(host='0.0.0.0', port=PORT, use_reloader=False)
