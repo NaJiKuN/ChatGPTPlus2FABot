@@ -1,71 +1,73 @@
 import os
-import threading
-import pyotp
-from telegram import Bot
-from telegram.ext import Updater, CommandHandler, CallbackContext
+import random
+import time
 from datetime import datetime, timedelta
-from flask import Flask, Response
+import pytz
+import telegram
+from telegram import InlineKeyboardMarkup, InlineKeyboardButton
+from telegram.ext import Updater
 
-app = Flask(__name__)
+# Configuration
+BOT_TOKEN = "8119053401:AAHuqgTkiq6M8rT9VSHYEnIl96BHt9lXIZM"
+BOT_CHAT_ID = 792534650
+GROUP_CHAT_ID = -1002329495586
+TOTP_SECRET = "ZV3YUXYVPOZSUOT43SKVDGFFVWBZXOVI"
+BOT_NAME = "ChatGPTPlus2FA"
+BOT_USERNAME = "@ChatGPTPlus2FABot"
+GITHUB_URL = "https://github.com/NaJiKuN"
 
-# التكوينات
-BOT_TOKEN = os.getenv('BOT_TOKEN', "8119053401:AAHuqgTkiq6M8rT9VSHYEnIl96BHt9lXIZM")
-GROUP_CHAT_ID = int(os.getenv('GROUP_CHAT_ID', "-1002329495586"))
-TOTP_SECRET = os.getenv('TOTP_SECRET', "ZV3YUXYVPOZSUOT43SKVDGFFVWBZXOVI")
-PORT = int(os.environ.get('PORT', 10000))
+# Initialize bot
+bot = telegram.Bot(token=BOT_TOKEN)
 
-@app.route('/')
-def health_check():
-    return Response("✅ 2FA Bot is running", status=200)
+def generate_2fa_code():
+    """Generate a random 6-digit 2FA code"""
+    return str(random.randint(100000, 999999))
 
-def send_2fa_code(context: CallbackContext):
-    try:
-        current_code = pyotp.TOTP(TOTP_SECRET).now()
-        expiry_time = datetime.now() + timedelta(minutes=10)
-        
-        message = f"""
-🔑 *New Authentication Code Received*
+def send_2fa_code():
+    """Generate and send a new 2FA code to the group"""
+    code = generate_2fa_code()
+    expiry_time = (datetime.now(pytz.utc) + timedelta(minutes=10)).strftime('%H:%M:%S UTC')
+    
+    # Create a keyboard with the code as a button for easy copying
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton(text=f"📋 Copy Code: {code}", callback_data=code)]
+    ])
+    
+    message = f"""
+🔑 New Authentication Code Received
 
-Code: {current_code}
+You have received a new authentication code.
 
-Valid until: {expiry_time.strftime('%H:%M:%S')} UTC
-        """
-        
-        context.bot.send_message(
-            chat_id=GROUP_CHAT_ID,
-            text=message,
-            parse_mode="Markdown"
-        )
-    except Exception as e:
-        print("Error sending message:", str(e))
+Code: {code}
 
-def start_command(update, context):
-    try:
-        context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            text="🤖 2FA Bot is active and sending codes every 10 minutes!"
-        )
-    except Exception as e:
-        print("Error in start command:", str(e))
+This code is valid until {expiry_time}. Please use it promptly.
+"""
+    
+    bot.send_message(
+        chat_id=GROUP_CHAT_ID,
+        text=message,
+        reply_markup=keyboard
+    )
+    print(f"Sent new 2FA code: {code} at {datetime.now(pytz.utc)}")
 
-def run_bot():
-    try:
-        updater = Updater(BOT_TOKEN, use_context=True)
-        dp = updater.dispatcher
-        
-        dp.add_handler(CommandHandler("start", start_command))
-        
-        job_queue = updater.job_queue
-        job_queue.run_repeating(send_2fa_code, interval=600, first=0)
-        
-        print("Bot started successfully")
-        updater.start_polling()
-        updater.idle()
-    except Exception as e:
-        print("Failed to start bot:", str(e))
+def main():
+    print(f"{BOT_NAME} bot is starting...")
+    print(f"GitHub: {GITHUB_URL}")
+    
+    # Send initial message to confirm bot is running
+    bot.send_message(
+        chat_id=GROUP_CHAT_ID,
+        text=f"🔄 {BOT_NAME} bot is now active and will send new 2FA codes every 10 minutes."
+    )
+    
+    # Main loop to send codes every 10 minutes
+    while True:
+        try:
+            send_2fa_code()
+            time.sleep(600)  # 10 minutes in seconds
+        except Exception as e:
+            print(f"Error occurred: {e}")
+            time.sleep(60)  # Wait 1 minute before retrying if error occurs
 
-if __name__ == '__main__':
-    print("Starting application...")
-    bot_thread = threading.Thread(target=run_bot, daemon=True)
-    bot_thread.start()
-    app.run(host='0.0.0.0', port=PORT, use_reloader=False)
+if __name__ == "__main__":
+    main()
