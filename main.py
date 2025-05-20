@@ -56,7 +56,7 @@ def send_2fa_code(context: CallbackContext):
 
 📋 `{current_code}`
 
-⏳ صالح حتى: {expiry_time.strftime('%H:%M:%S')} UTC
+⏳ وقت الكود التالي: {expiry_time.strftime('%H:%M:%S')} UTC
         """
         
         context.bot.send_message(
