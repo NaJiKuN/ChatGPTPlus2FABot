@@ -1,12 +1,8 @@
 import os
-import time
 import pyotp
 from telegram import Bot, Update
 from telegram.ext import Updater, CommandHandler, CallbackContext
 from datetime import datetime, timedelta
-from flask import Flask, Response
-
-app = Flask(__name__)
 
 # التكوينات
 BOT_TOKEN = os.getenv('BOT_TOKEN', "8119053401:AAHuqgTkiq6M8rT9VSHYEnIl96BHt9lXIZM")
@@ -16,11 +12,6 @@ ADMIN_IDS = [792534650]  # أرقام معرفات المشرفين
 
 # حالة البوت
 bot_active = True
-updater = None
-
-@app.route('/')
-def health_check():
-    return Response("✅ 2FA Bot is running", status=200)
 
 def send_2fa_code(context: CallbackContext):
     global bot_active
@@ -62,8 +53,7 @@ def stop(update: Update, context: CallbackContext):
     else:
         update.message.reply_text("🚫 You are not authorized to stop this bot.")
 
-def run_bot():
-    global updater
+def main():
     updater = Updater(BOT_TOKEN, use_context=True)
     dp = updater.dispatcher
     
@@ -75,12 +65,8 @@ def run_bot():
     
     print("🟢 Bot started successfully")
     updater.start_polling()
+    updater.idle()
 
 if __name__ == '__main__':
     print("🚀 Starting application...")
-    
-    # تشغيل البوت
-    run_bot()
-    
-    # تشغيل Flask في نفس الخيط (للتجنب مشاكل Render)
-    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 10000)), use_reloader=False, threaded=True)
+    main()
