@@ -1,2 +1,1 @@
-web: gunicorn main:app --bind 0.0.0.0:$PORT --workers 1 --timeout 120
-worker: python main.py --mode=bot
+web: gunicorn main:app --bind 0.0.0.0:$PORT --workers 1 --timeout 120 --preload
