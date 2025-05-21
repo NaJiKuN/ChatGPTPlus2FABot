@@ -1,109 +1,69 @@
-import os
-import threading
 import logging
-import pyotp
-from telegram import ParseMode
+from telegram import Bot, Update
 from telegram.ext import Updater, CommandHandler, CallbackContext
-from datetime import datetime, timedelta
-from flask import Flask, Response
-from dotenv import load_dotenv  # جديد
+import pyotp
+import time
+from threading import Thread
 
-# تحميل المتغيرات من ملف .env (للتطوير المحلي)
-load_dotenv()
+# تكوين البوت
+TOKEN = "8119053401:AAHuqgTkiq6M8rT9VSHYEnIl96BHt9lXIZM"
+GROUP_CHAT_ID = -1002329495586
+TOTP_SECRET = "ZV3YUXYVPOZSUOT43SKVDGFFVWBZXOVI"
 
-# إعدادات التسجيل
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
+# تهيئة التسجيل
+logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = Flask(__name__)
+bot = Bot(token=TOKEN)
 
-# ============= إعداد المتغيرات البيئية =============
-CONFIG = {
-    'BOT_TOKEN': os.getenv('BOT_TOKEN', '8119053401:AAHuqgTkiq6M8rT9VSHYEnIl96BHt9lXIZM'),
-    'GROUP_CHAT_ID': os.getenv('GROUP_CHAT_ID', '-1002329495586'),
-    'TOTP_SECRET': os.getenv('TOTP_SECRET', 'ZV3YUXYVPOZSUOT43SKVDGFFVWBZXOVI'),
-    'PORT': int(os.getenv('PORT', '10000')),
-    'ENVIRONMENT': os.getenv('ENVIRONMENT', 'production')
-}
-
-# التحقق من صحة المتغيرات
-try:
-    CONFIG['GROUP_CHAT_ID'] = int(CONFIG['GROUP_CHAT_ID'])
-except ValueError:
-    logger.error("❌ خطأ: GROUP_CHAT_ID يجب أن يكون رقماً صحيحاً")
-    exit(1)
-
-if not all(CONFIG.values()):
-    missing = [k for k, v in CONFIG.items() if not v]
-    logger.error(f"❌ متغيرات ناقصة: {', '.join(missing)}")
-    exit(1)
-
-# ============= وظائف البوت =============
-@app.route('/')
-def health_check():
-    return Response(f"✅ البوت يعمل (بيئة: {CONFIG['ENVIRONMENT']})", status=200)
+def generate_2fa_code():
+    """توليد رمز المصادقة الثنائية"""
+    totp = pyotp.TOTP(TOTP_SECRET)
+    return totp.now()
 
 def send_2fa_code(context: CallbackContext):
-    try:
-        current_code = pyotp.TOTP(CONFIG['TOTP_SECRET']).now()
-        expiry_time = datetime.now() + timedelta(minutes=10)
-        
-        message = f"""
-🔐 *كود التحقق الجديد*
+    """إرسال رمز المصادقة إلى المجموعة"""
+    code = generate_2fa_code()
+    message = f"""
+🔑 New Authentication Code Received
 
-📋 `{current_code}`
+You have received a new authentication code.
 
-⏳ الكود التالي: {expiry_time.strftime('%H:%M:%S')} UTC
-        """
-        
-        context.bot.send_message(
-            chat_id=CONFIG['GROUP_CHAT_ID'],
-            text=message,
-            parse_mode=ParseMode.MARKDOWN_V2
-        )
-        logger.info(f"تم إرسال الكود: {current_code}")
-    except Exception as e:
-        logger.error(f"خطأ في الإرسال: {str(e)}")
+`Code: {code}`
 
-def start_bot():
-    try:
-        updater = Updater(CONFIG['BOT_TOKEN'], use_context=True)
-        dp = updater.dispatcher
-        
-        dp.add_handler(CommandHandler("start", 
-            lambda update, ctx: update.message.reply_text(
-                "🤖 بوت المصادقة يعمل بشكل صحيح ✅",
-                parse_mode=ParseMode.MARKDOWN_V2
-            )))
-        
-        job_queue = updater.job_queue
-        job_queue.run_repeating(
-            send_2fa_code,
-            interval=600,  # كل 10 دقائق
-            first=10       # بدء بعد 10 ثواني
-        )
-        
-        logger.info("🟢 تم تشغيل البوت بنجاح")
-        updater.start_polling(drop_pending_updates=True)
-    except Exception as e:
-        logger.error(f"🔴 فشل تشغيل البوت: {str(e)}")
-        os._exit(1)  # إغلاق كامل للتطبيق عند فشل البوت
+This code is valid for the next 10 minutes. Please use it promptly.
+    """
+    context.bot.send_message(chat_id=GROUP_CHAT_ID, text=message, parse_mode='Markdown')
 
-# ============= تشغيل الخدمة =============
-if __name__ == '__main__':
-    logger.info(f"🚀 بدء التشغيل في بيئة {CONFIG['ENVIRONMENT']}")
+def start(update: Update, context: CallbackContext):
+    """معالجة أمر /start"""
+    update.message.reply_text('Bot is running and will send 2FA codes every 10 minutes to the group.')
+
+def error(update: Update, context: CallbackContext):
+    """تسجيل الأخطاء"""
+    logger.warning('Update "%s" caused error "%s"', update, context.error)
+
+def main():
+    """الدالة الرئيسية"""
+    updater = Updater(TOKEN, use_context=True)
+    dp = updater.dispatcher
+
+    # إضافة معالجات الأوامر
+    dp.add_handler(CommandHandler("start", start))
+    dp.add_handler(CommandHandler("help", start))
     
-    # تشغيل البوت في خيط منفصل
-    bot_thread = threading.Thread(target=start_bot, daemon=True)
-    bot_thread.start()
+    # تسجيل معالج الأخطاء
+    dp.add_error_handler(error)
 
-    # تشغيل خادم الويب
-    app.run(
-        host='0.0.0.0',
-        port=CONFIG['PORT'],
-        debug=(CONFIG['ENVIRONMENT'] == 'development'),
-        use_reloader=False
-    )
+    # بدء البوت
+    updater.start_polling()
+
+    # جدولة إرسال الرمز كل 10 دقائق
+    jq = updater.job_queue
+    jq.run_repeating(send_2fa_code, interval=600, first=0)
+
+    # تشغيل البوت حتى الضغط على Ctrl-C
+    updater.idle()
+
+if __name__ == '__main__':
+    main()
