@@ -259,7 +259,6 @@ def send_2fa_code(context: CallbackContext, manual_request=False, lang='en', use
         ip = get_client_ip()
         device = "Unknown"
         
-        # الحصول على معلومات الجهاز بطريقة أكثر أماناً
         try:
             updates = context.bot.get_updates(limit=1)
             if updates:
@@ -305,7 +304,6 @@ def send_2fa_code(context: CallbackContext, manual_request=False, lang='en', use
         else:
             message = MESSAGES[lang]['new_code'].format(code=code, expiry_time=expiry_time)
         
-        # إرسال الرسالة مع التحكم في الرؤية
         if is_user_allowed(user.id if user else None):
             reply_markup = InlineKeyboardMarkup([[
                 InlineKeyboardButton(
@@ -342,6 +340,7 @@ def start(update: Update, context: CallbackContext):
             MESSAGES[lang]['welcome'],
             parse_mode='Markdown',
             reply_markup=create_keyboard(lang)
+        )
     except Exception as e:
         logger.error(f"Error in start command: {e}")
 
@@ -385,6 +384,7 @@ def show_admin_panel(update: Update, context: CallbackContext):
             ),
             parse_mode='Markdown',
             reply_markup=InlineKeyboardMarkup(keyboard)
+        )
     except Exception as e:
         logger.error(f"Error showing admin panel: {e}")
 
