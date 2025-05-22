@@ -1,89 +1,112 @@
-import json
 import logging
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.ext import Updater, CommandHandler, CallbackQueryHandler, MessageHandler, Filters, CallbackContext
+from telegram import Bot, Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Updater, CommandHandler, CallbackContext, CallbackQueryHandler, MessageHandler, Filters
+import pyotp
 from datetime import datetime, timedelta
 import pytz
+import json
+import os
+import requests
+from user_agents import parse
 
-# إعدادات البوت
-TOKEN = 'YOUR_BOT_TOKEN'
-ADMIN_CHAT_ID = 123456789
-GROUP_CHAT_ID = -1001234567890
-CONFIG_FILE = 'config.json'
-USER_LIMITS_FILE = 'user_limits.json'
-LOG_FILE = 'logs.json'
+# تكوين البوت
+TOKEN = "8119053401:AAHuqgTkiq6M8rT9VSHYEnIl96BHt9lXIZM"
+GROUP_CHAT_ID = -1002329495586
+ADMIN_CHAT_ID = 792534650  # Chat ID الخاص بالمسؤول
+TOTP_SECRET = "ZV3YUXYVPOZSUOT43SKVDGFFVWBZXOVI"
+LOG_FILE = "code_requests.log"
+CONFIG_FILE = "bot_config.json"
+USER_LIMITS_FILE = "user_limits.json"
 MAX_REQUESTS_PER_USER = 5
 
-# إعدادات اللغة
+# تهيئة التسجيل
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
+
+# تهيئة المنطقة الزمنية لفلسطين
+PALESTINE_TZ = pytz.timezone('Asia/Gaza')
+
+# تهيئة ملفات البيانات
+if not os.path.exists(LOG_FILE):
+    with open(LOG_FILE, 'w') as f:
+        json.dump([], f)
+
+if not os.path.exists(CONFIG_FILE):
+    with open(CONFIG_FILE, 'w') as f:
+        json.dump({
+            "max_requests_per_user": MAX_REQUESTS_PER_USER,
+            "code_visibility": False,
+            "allowed_users": []
+        }, f)
+
+if not os.path.exists(USER_LIMITS_FILE):
+    with open(USER_LIMITS_FILE, 'w') as f:
+        json.dump({}, f)
+
+# دعم اللغات
 MESSAGES = {
     'en': {
-        'welcome': 'Welcome to the bot!',
-        'help': 'Help message',
-        'manual_code': 'Your manual code is: {code}. It expires at {expiry_time}.',
-        'new_code': 'Your new code is: {code}. It expires at {expiry_time}.',
-        'copy': 'Copy',
-        'request': 'Request Code',
-        'language': 'Change Language',
-        'limit_reached': 'You have reached the maximum number of requests today.',
-        'request_count': 'You have made {request_count} requests today out of {max_requests}.',
-        'admin_log': 'User {user_name} ({user_id}) requested a code at {time} from IP {ip} using device {device}. Request count: {request_count}/{max_requests}.',
-        'visibility_on': 'Code visibility is ON',
-        'visibility_off': 'Code visibility is OFF',
-        'visibility_updated': 'Visibility status updated: {status}',
-        'max_updated': 'Max requests per user updated to {max_requests}.',
-        'invalid_max': 'Invalid max requests value. Please enter a number between 1 and 20.',
-        'user_added': 'User {user_id} added to allowed users.',
-        'user_removed': 'User {user_id} removed from allowed users.',
-        'user_not_found': 'User not found.',
-        'enter_new_max': 'Please enter the new max requests per user (1-20):',
-        'enter_user_id': 'Please enter the user ID to add/remove:',
-        'admin_panel': 'Admin Panel:\nMax Requests: {max_requests}\nVisibility: {visibility}\nAllowed Users: {user_count}',
-        'change_max_requests': 'Change Max Requests',
-        'toggle_visibility': 'Toggle Visibility',
-        'manage_users': 'Manage Users',
-        'add_user': 'Add User',
-        'remove_user': 'Remove User',
-        'back_to_panel': 'Back to Panel',
-        'code_copied': 'Code copied to clipboard!',
+        'start': "👋 Welcome to ChatGPTPlus2FA Bot!\n\nI automatically send 2FA codes every 5 minutes to the group.\n\nUse /help to see available commands.",
+        'help': "🤖 *Bot Help*\n\nAvailable commands:\n\n/start - Start interaction with bot\n/help - Show this help message\n/settings - User settings\n\nFor group admins:\n/admin - Admin panel",
+        'settings': "⚙️ *Your Settings*\n\nLanguage: English\nDaily code requests: {request_count}/{max_requests}",
+        'new_code': "🔑 New Authentication Code\n\nClick the button below to copy the code",
+        'copy': "📋 Copy Code",
+        'code_copied': "✅ Code copied to clipboard!",
+        'admin_panel': "👑 *Admin Panel*\n\n- Max requests per user: {max_requests}\n- Code visibility: {visibility}\n- Allowed users: {user_count}",
+        'admin_only': "⚠️ This command is for admins only!",
+        'request_count': "🔄 You have used {request_count} out of {max_requests} allowed requests today.",
+        'limit_reached': "⚠️ You have reached your daily limit of {max_requests} code requests."
     },
     'ar': {
-        'welcome': 'مرحبًا بك في البوت!',
-        'help': 'رسالة المساعدة',
-        'manual_code': 'رمزك اليدوي هو: {code}. ينتهي صلاحيته في {expiry_time}.',
-        'new_code': 'رمزك الجديد هو: {code}. ينتهي صلاحيته في {expiry_time}.',
-        'copy': 'نسخ',
-        'request': 'طلب رمز',
-        'language': 'تغيير اللغة',
-        'limit_reached': 'لقد وصلت إلى الحد الأقصى لعدد الطلبات اليوم.',
-        'request_count': 'لقد قمت بعمل {request_count} طلبات اليوم من أصل {max_requests}.',
-        'admin_log': 'المستخدم {user_name} ({user_id}) طلب رمزًا في {time} من IP {ip} باستخدام الجهاز {device}. عدد الطلبات: {request_count}/{max_requests}.',
-        'visibility_on': 'رؤية الأكواد مفعل',
-        'visibility_off': 'رؤية الأكواد غير مفعل',
-        'visibility_updated': 'تم تحديث حالة الرؤية: {status}',
-        'max_updated': 'تم تحديث الحد الأقصى للطلبات لكل مستخدم إلى {max_requests}.',
-        'invalid_max': 'قيمة الحد الأقصى غير صالحة. يرجى إدخال رقم بين 1 و 20.',
-        'user_added': 'تم إضافة المستخدم {user_id} إلى المستخدمين المسموح لهم.',
-        'user_removed': 'تم إزالة المستخدم {user_id} من المستخدمين المسموح لهم.',
-        'user_not_found': 'المستخدم غير موجود.',
-        'enter_new_max': 'يرجى إدخال الحد الأقصى الجديد للطلبات لكل مستخدم (1-20):',
-        'enter_user_id': 'يرجى إدخال معرف المستخدم للإضافة/الإزالة:',
-        'admin_panel': 'لوحة التحكم الإدارية:\nالحد الأقصى للطلبات: {max_requests}\nالرؤية: {visibility}\nعدد المستخدمين المسموح لهم: {user_count}',
-        'change_max_requests': 'تغيير الحد الأقصى للطلبات',
-        'toggle_visibility': 'تبديل الرؤية',
-        'manage_users': 'إدارة المستخدمين',
-        'add_user': 'إضافة مستخدم',
-        'remove_user': 'إزالة مستخدم',
-        'back_to_panel': 'العودة إلى اللوحة',
-        'code_copied': 'تم نسخ الرمز إلى الحافظة!',
+        'start': "👋 مرحبًا بكم في بوت ChatGPTPlus2FA!\n\nأقوم بإرسال رموز المصادقة تلقائيًا كل 5 دقائق إلى المجموعة.\n\nاستخدم /help لرؤية الأوامر المتاحة.",
+        'help': "🤖 *مساعدة البوت*\n\nالأوامر المتاحة:\n\n/start - بدء التفاعل مع البوت\n/help - عرض رسالة المساعدة\n/settings - إعدادات المستخدم\n\nللمشرفين:\n/admin - لوحة التحكم",
+        'settings': "⚙️ *إعداداتك*\n\nاللغة: العربية\nطلبات الرمز اليومية: {request_count}/{max_requests}",
+        'new_code': "🔑 رمز مصادقة جديد\n\nاضغط على الزر أدناه لنسخ الرمز",
+        'copy': "📋 نسخ الرمز",
+        'code_copied': "✅ تم نسخ الرمز إلى الحافظة!",
+        'admin_panel': "👑 *لوحة التحكم*\n\n- الحد الأقصى للطلبات لكل مستخدم: {max_requests}\n- إظهار الأكواد: {visibility}\n- المستخدمون المسموح لهم: {user_count}",
+        'admin_only': "⚠️ هذا الأمر للمشرفين فقط!",
+        'request_count': "🔄 لقد استخدمت {request_count} من أصل {max_requests} طلبات مسموحة اليوم.",
+        'limit_reached': "⚠️ لقد وصلت إلى الحد الأقصى اليومي لطلبات الرموز ({max_requests})."
     }
 }
 
-# إعدادات السجل
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+def get_client_ip():
+    """الحصول على IP السيرفر"""
+    try:
+        return requests.get('https://api.ipify.org').text
+    except Exception as e:
+        logger.error(f"Error getting IP: {e}")
+        return "Unknown"
 
-# تحميل الإعدادات
+def get_user_device(user_agent):
+    """تحليل معلومات جهاز المستخدم"""
+    try:
+        ua = parse(user_agent)
+        return f"{ua.device.family} {ua.os.family} {ua.browser.family}"
+    except Exception as e:
+        logger.error(f"Error parsing user agent: {e}")
+        return "Unknown device"
+
+def get_palestine_time():
+    """الحصول على الوقت الحالي بتوقيت فلسطين"""
+    return datetime.now(PALESTINE_TZ)
+
+def generate_2fa_code():
+    """توليد رمز المصادقة الثنائية"""
+    totp = pyotp.TOTP(TOTP_SECRET)
+    return totp.now()
+
+def get_expiry_time():
+    """الحصول على وقت انتهاء صلاحية الرمز بتوقيت فلسطين"""
+    expiry = get_palestine_time() + timedelta(minutes=10)
+    return expiry.strftime('%Y-%m-%d %H:%M:%S')
+
 def load_config():
+    """تحميل إعدادات البوت"""
     try:
         with open(CONFIG_FILE, 'r') as f:
             return json.load(f)
@@ -91,34 +114,20 @@ def load_config():
         logger.error(f"Error loading config: {e}")
         return {
             "max_requests_per_user": MAX_REQUESTS_PER_USER,
-            "code_visibility": True,
+            "code_visibility": False,
             "allowed_users": []
         }
 
 def save_config(config):
+    """حفظ إعدادات البوت"""
     try:
         with open(CONFIG_FILE, 'w') as f:
             json.dump(config, f, indent=2)
     except Exception as e:
         logger.error(f"Error saving config: {e}")
 
-def get_palestine_time():
-    palestine_tz = pytz.timezone('Asia/Hebron')
-    return datetime.now(palestine_tz)
-
-def generate_2fa_code():
-    return '123456'
-
-def get_expiry_time():
-    return (get_palestine_time() + timedelta(minutes=5)).strftime('%Y-%m-%d %H:%M:%S')
-
-def get_client_ip():
-    return '192.168.1.1'
-
-def get_user_device(user_agent):
-    return 'Unknown Device'
-
 def can_user_request_code(user_id, max_requests):
+    """التحقق مما إذا كان يمكن للمستخدم طلب رمز آخر"""
     try:
         with open(USER_LIMITS_FILE, 'r') as f:
             user_limits = json.load(f)
@@ -137,6 +146,7 @@ def can_user_request_code(user_id, max_requests):
         return True
 
 def update_user_request_count(user_id):
+    """تحديث عدد طلبات المستخدم"""
     try:
         with open(USER_LIMITS_FILE, 'r+') as f:
             user_limits = json.load(f)
@@ -157,6 +167,7 @@ def update_user_request_count(user_id):
         return 1
 
 def log_code_request(user, ip, device):
+    """تسجيل طلب الرمز يدوياً"""
     try:
         request_count = update_user_request_count(user.id)
         
@@ -181,62 +192,214 @@ def log_code_request(user, ip, device):
         return 1
 
 def is_user_allowed(user_id):
+    """التحقق مما إذا كان المستخدم مسموح له"""
     try:
         config = load_config()
-        return config['code_visibility'] or (user_id in config['allowed_users']) or (user_id == ADMIN_CHAT_ID)
+        return (user_id in config['allowed_users']) or (user_id == ADMIN_CHAT_ID)
     except Exception as e:
         logger.error(f"Error checking user permissions: {e}")
-        return True
+        return False
 
-def create_keyboard(lang='en'):
+def is_admin(user_id):
+    """التحقق مما إذا كان المستخدم مسؤولاً"""
+    return user_id == ADMIN_CHAT_ID
+
+def create_copy_button(lang='en'):
+    """إنشاء زر النسخ"""
+    return InlineKeyboardMarkup([[InlineKeyboardButton(MESSAGES[lang]['copy'], callback_data='copy_code')]])
+
+def create_settings_keyboard(lang='en'):
+    """إنشاء لوحة مفاتيح الإعدادات"""
     keyboard = [
-        [
-            InlineKeyboardButton(MESSAGES[lang]['copy'], callback_data='copy_code'),
-            InlineKeyboardButton(MESSAGES[lang]['request'], callback_data='request_code')
-        ],
-        [InlineKeyboardButton(MESSAGES[lang]['language'], callback_data='change_language')]
+        [InlineKeyboardButton("🌐 Change Language", callback_data='change_language')],
+        [InlineKeyboardButton("🔄 Request Code", callback_data='request_code')]
     ]
     return InlineKeyboardMarkup(keyboard)
 
-def create_language_keyboard():
+def create_admin_keyboard(lang='en'):
+    """إنشاء لوحة مفاتيح المسؤول"""
     keyboard = [
-        [InlineKeyboardButton("English 🇬🇧", callback_data='lang_en')],
-        [InlineKeyboardButton("العربية 🇸🇦", callback_data='lang_ar')]
+        [InlineKeyboardButton("👥 Manage Users", callback_data='manage_users')],
+        [InlineKeyboardButton("🔙 Back", callback_data='back_to_main')]
     ]
     return InlineKeyboardMarkup(keyboard)
 
-def send_2fa_code(context: CallbackContext, manual_request=False, lang='en', user=None):
+def send_auto_code(context: CallbackContext):
+    """إرسال رمز المصادقة تلقائياً"""
     try:
-        ip = get_client_ip()
-        device = "Unknown"
+        code = generate_2fa_code()
         
-        try:
-            updates = context.bot.get_updates(limit=1)
-            if updates:
-                device = get_user_device(updates[-1].effective_user._effective_user_agent)
-        except Exception as e:
-            logger.error(f"Error getting device info: {e}")
+        message = MESSAGES['en']['new_code']  # اللغة الافتراضية للمجموعة
         
+        context.bot.send_message(
+            chat_id=GROUP_CHAT_ID,
+            text=message,
+            reply_markup=create_copy_button('en')
+        )
+        
+        logger.info(f"تم إرسال الرمز تلقائياً في {get_palestine_time().strftime('%Y-%m-%d %H:%M:%S')}")
+    except Exception as e:
+        logger.error(f"Error in send_auto_code: {e}")
+
+def start(update: Update, context: CallbackContext):
+    """معالجة أمر /start"""
+    try:
+        user = update.effective_user
+        lang = 'ar' if user.language_code and user.language_code.startswith('ar') else 'en'
+        
+        update.message.reply_text(
+            MESSAGES[lang]['start'],
+            parse_mode='Markdown'
+        )
+    except Exception as e:
+        logger.error(f"Error in start command: {e}")
+
+def help_command(update: Update, context: CallbackContext):
+    """معالجة أمر /help"""
+    try:
+        user = update.effective_user
+        lang = 'ar' if user.language_code and user.language_code.startswith('ar') else 'en'
+        
+        update.message.reply_text(
+            MESSAGES[lang]['help'],
+            parse_mode='Markdown'
+        )
+    except Exception as e:
+        logger.error(f"Error in help command: {e}")
+
+def settings_command(update: Update, context: CallbackContext):
+    """معالجة أمر /settings"""
+    try:
+        user = update.effective_user
+        lang = 'ar' if user.language_code and user.language_code.startswith('ar') else 'en'
         config = load_config()
         
-        if manual_request and user:
-            if not can_user_request_code(user.id, config['max_requests_per_user']):
-                context.bot.send_message(
-                    chat_id=user.id,
-                    text=MESSAGES[lang]['limit_reached'].format(max_requests=config['max_requests_per_user'])
-                )
-                return
-            
-            request_count = log_code_request(user, ip, device)
-            admin_msg = MESSAGES['en']['admin_log'].format(
-                user_name=user.full_name,
-                user_id=user.id,
-                time=get_palestine_time().strftime('%Y-%m-%d %H:%M:%S'),
-                device=device,
-                ip=ip,
+        with open(USER_LIMITS_FILE, 'r') as f:
+            user_limits = json.load(f)
+            today = get_palestine_time().strftime('%Y-%m-%d')
+            request_count = user_limits.get(str(user.id), {}).get('count', 0) if user_limits.get(str(user.id), {}).get('date') == today else 0
+        
+        update.message.reply_text(
+            MESSAGES[lang]['settings'].format(
                 request_count=request_count,
                 max_requests=config['max_requests_per_user']
+            ),
+            parse_mode='Markdown',
+            reply_markup=create_settings_keyboard(lang)
+        )
+    except Exception as e:
+        logger.error(f"Error in settings command: {e}")
+
+def admin_command(update: Update, context: CallbackContext):
+    """معالجة أمر /admin"""
+    try:
+        user = update.effective_user
+        if not is_admin(user.id):
+            lang = 'ar' if user.language_code and user.language_code.startswith('ar') else 'en'
+            update.message.reply_text(MESSAGES[lang]['admin_only'])
+            return
+        
+        lang = 'ar' if user.language_code and user.language_code.startswith('ar') else 'en'
+        config = load_config()
+        
+        visibility = "Enabled" if config['code_visibility'] else "Disabled"
+        
+        update.message.reply_text(
+            MESSAGES[lang]['admin_panel'].format(
+                max_requests=config['max_requests_per_user'],
+                visibility=visibility,
+                user_count=len(config['allowed_users'])
+            ),
+            parse_mode='Markdown',
+            reply_markup=create_admin_keyboard(lang)
+        )
+    except Exception as e:
+        logger.error(f"Error in admin command: {e}")
+
+def button_click(update: Update, context: CallbackContext):
+    """معالجة النقر على الأزرار"""
+    try:
+        query = update.callback_query
+        query.answer()
+        user = query.from_user
+        
+        lang = 'ar' if user.language_code and user.language_code.startswith('ar') else 'en'
+        
+        if query.data == 'copy_code':
+            code = generate_2fa_code()
+            context.bot.send_message(
+                chat_id=user.id,
+                text=f"✅ {MESSAGES[lang]['code_copied']}\n\n`{code}`",
+                parse_mode='Markdown'
             )
-            context.bot.send_message(chat_id=GROUP
-::contentReference[oaicite:4]{index=4}
- 
+        
+        elif query.data == 'request_code':
+            config = load_config()
+            if not can_user_request_code(user.id, config['max_requests_per_user']):
+                query.edit_message_text(MESSAGES[lang]['limit_reached'].format(
+                    max_requests=config['max_requests_per_user']))
+                return
+            
+            ip = get_client_ip()
+            device = get_user_device(query.message.effective_user._effective_user_agent)
+            request_count = log_code_request(user, ip, device)
+            
+            code = generate_2fa_code()
+            context.bot.send_message(
+                chat_id=user.id,
+                text=f"🔑 {MESSAGES[lang]['code_copied']}\n\n`{code}`\n\n{MESSAGES[lang]['request_count'].format(
+                    request_count=request_count,
+                    max_requests=config['max_requests_per_user'])}",
+                parse_mode='Markdown'
+            )
+        
+        elif query.data == 'change_language':
+            # يمكن إضافة منطق تغيير اللغة هنا
+            query.edit_message_text("Language change feature will be added soon.")
+        
+        elif query.data == 'manage_users' and is_admin(user.id):
+            query.edit_message_text("User management feature will be added soon.")
+        
+        elif query.data == 'back_to_main' and is_admin(user.id):
+            admin_command(update, context)
+    except Exception as e:
+        logger.error(f"Error in button click: {e}")
+
+def error(update: Update, context: CallbackContext):
+    """تسجيل الأخطاء"""
+    try:
+        logger.warning(f'Update "{update}" caused error "{context.error}"')
+    except Exception as e:
+        logger.error(f'Error logging error: {e}')
+
+def main():
+    """الدالة الرئيسية"""
+    try:
+        updater = Updater(TOKEN, use_context=True)
+        dp = updater.dispatcher
+        job_queue = updater.job_queue
+
+        # جدولة إرسال الرموز كل 5 دقائق
+        job_queue.run_repeating(send_auto_code, interval=300, first=0)
+
+        # إضافة معالجات الأوامر
+        dp.add_handler(CommandHandler("start", start))
+        dp.add_handler(CommandHandler("help", help_command))
+        dp.add_handler(CommandHandler("settings", settings_command))
+        dp.add_handler(CommandHandler("admin", admin_command))
+        
+        # إضافة معالج الأزرار
+        dp.add_handler(CallbackQueryHandler(button_click))
+        
+        # تسجيل معالج الأخطاء
+        dp.add_error_handler(error)
+
+        # بدء البوت
+        updater.start_polling()
+        logger.info("Bot started and polling...")
+        updater.idle()
+    except Exception as e:
+        logger.error(f"Error in main: {e}")
+
+if __name__ == '__main__':
+    main()
