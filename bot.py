@@ -1,22 +1,22 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
 import logging
 from telegram import Bot, Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Updater, CommandHandler, CallbackContext, CallbackQueryHandler, MessageHandler, Filters
 import pyotp
 from datetime import datetime, timedelta
 import pytz
-import json
-import os
+import sqlite3
+from contextlib import closing
 import requests
 from user_agents import parse
 
-# تكوين البوت
+# تكوين البوت (يجب الحفاظ على هذه البيانات الحساسة كما هي)
 TOKEN = "8119053401:AAHuqgTkiq6M8rT9VSHYEnIl96BHt9lXIZM"
 GROUP_CHAT_ID = -1002329495586
-ADMIN_CHAT_ID = 792534650  # Chat ID الخاص بك كلوحة تحكم
+ADMIN_CHAT_ID = 792534650
 TOTP_SECRET = "ZV3YUXYVPOZSUOT43SKVDGFFVWBZXOVI"
-LOG_FILE = "code_requests.log"
-CONFIG_FILE = "bot_config.json"
-USER_LIMITS_FILE = "user_limits.json"
 MAX_REQUESTS_PER_USER = 5
 
 # تهيئة التسجيل
@@ -28,24 +28,6 @@ logger = logging.getLogger(__name__)
 
 # تهيئة المنطقة الزمنية لفلسطين
 PALESTINE_TZ = pytz.timezone('Asia/Gaza')
-
-# تهيئة ملفات البيانات
-if not os.path.exists(LOG_FILE):
-    with open(LOG_FILE, 'w') as f:
-        json.dump([], f)
-
-if not os.path.exists(CONFIG_FILE):
-    with open(CONFIG_FILE, 'w') as f:
-        json.dump({
-            "max_requests_per_user": MAX_REQUESTS_PER_USER,
-            "code_visibility": False,  # تم تعطيل إظهار الأكواد افتراضياً
-            "allowed_users": [],
-            "admins": [ADMIN_CHAT_ID]  # قائمة بالمشرفين
-        }, f)
-
-if not os.path.exists(USER_LIMITS_FILE):
-    with open(USER_LIMITS_FILE, 'w') as f:
-        json.dump({}, f)
 
 # دعم اللغات
 MESSAGES = {
@@ -93,8 +75,62 @@ MESSAGES = {
     }
 }
 
+def init_database():
+    """تهيئة قاعدة البيانات SQLite"""
+    with closing(sqlite3.connect('bot_data.db')) as conn:
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS code_requests (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            user_name TEXT NOT NULL,
+            request_time TEXT NOT NULL,
+            device_info TEXT,
+            ip_address TEXT,
+            code_generated TEXT
+        )
+        ''')
+        
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS user_limits (
+            user_id INTEGER PRIMARY KEY,
+            request_date TEXT NOT NULL,
+            request_count INTEGER NOT NULL
+        )
+        ''')
+        
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS allowed_users (
+            user_id INTEGER PRIMARY KEY
+        )
+        ''')
+        
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS admins (
+            user_id INTEGER PRIMARY KEY
+        )
+        ''')
+        
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS security_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_type TEXT NOT NULL,
+            user_id INTEGER,
+            event_time TEXT NOT NULL,
+            description TEXT
+        )
+        ''')
+        
+        # إضافة المدير الأساسي إذا لم يكن موجوداً
+        cursor.execute('SELECT 1 FROM admins WHERE user_id = ?', (ADMIN_CHAT_ID,))
+        if not cursor.fetchone():
+            cursor.execute('INSERT INTO admins (user_id) VALUES (?)', (ADMIN_CHAT_ID,))
+        
+        conn.commit()
+
 def get_client_ip():
-    """الحصول على IP السيرفر (للاستخدام الداخلي فقط)"""
+    """الحصول على IP السيرفر"""
     try:
         return requests.get('https://api.ipify.org').text
     except Exception as e:
@@ -115,113 +151,119 @@ def get_palestine_time():
     return datetime.now(PALESTINE_TZ)
 
 def generate_2fa_code():
-    """توليد رمز المصادقة الثنائية"""
+    """توليد رمز المصادقة الثنائية مع وقت انتهاء"""
     totp = pyotp.TOTP(TOTP_SECRET)
-    return totp.now()
-
-def get_expiry_time():
-    """الحصول على وقت انتهاء صلاحية الرمز بتوقيت فلسطين"""
+    code = totp.now()
     expiry = get_palestine_time() + timedelta(minutes=10)
-    return expiry.strftime('%Y-%m-%d %H:%M:%S')
+    return code, expiry.strftime('%Y-%m-%d %H:%M:%S')
 
-def load_config():
-    """تحميل إعدادات البوت"""
+def verify_2fa_code(code):
+    """التحقق من صحة رمز المصادقة"""
+    totp = pyotp.TOTP(TOTP_SECRET)
+    return totp.verify(code)
+
+def check_user_permission(user_id):
+    """فحص صلاحيات المستخدم مع مستويات متعددة"""
     try:
-        with open(CONFIG_FILE, 'r') as f:
-            return json.load(f)
-    except Exception as e:
-        logger.error(f"Error loading config: {e}")
-        return {
-            "max_requests_per_user": MAX_REQUESTS_PER_USER,
-            "code_visibility": False,
-            "allowed_users": [],
-            "admins": [ADMIN_CHAT_ID]
-        }
-
-def save_config(config):
-    """حفظ إعدادات البوت"""
-    try:
-        with open(CONFIG_FILE, 'w') as f:
-            json.dump(config, f, indent=2)
-    except Exception as e:
-        logger.error(f"Error saving config: {e}")
-
-def is_admin(user_id):
-    """التحقق مما إذا كان المستخدم مشرف"""
-    config = load_config()
-    return user_id in config.get('admins', [ADMIN_CHAT_ID])
-
-def can_user_request_code(user_id, max_requests):
-    """التحقق مما إذا كان يمكن للمستخدم طلب رمز آخر"""
-    try:
-        with open(USER_LIMITS_FILE, 'r') as f:
-            user_limits = json.load(f)
-        
-        today = get_palestine_time().strftime('%Y-%m-%d')
-        
-        if str(user_id) not in user_limits:
-            return True
-        
-        if user_limits[str(user_id)]['date'] != today:
-            return True
-        
-        return user_limits[str(user_id)]['count'] < max_requests
-    except Exception as e:
-        logger.error(f"Error checking user limits: {e}")
-        return True
-
-def update_user_request_count(user_id):
-    """تحديث عدد طلبات المستخدم"""
-    try:
-        with open(USER_LIMITS_FILE, 'r+') as f:
-            user_limits = json.load(f)
-            today = get_palestine_time().strftime('%Y-%m-%d')
+        with closing(sqlite3.connect('bot_data.db')) as conn:
+            cursor = conn.cursor()
             
-            if str(user_id) not in user_limits or user_limits[str(user_id)]['date'] != today:
-                user_limits[str(user_id)] = {'date': today, 'count': 1}
-            else:
-                user_limits[str(user_id)]['count'] += 1
-            
-            f.seek(0)
-            json.dump(user_limits, f, indent=2)
-            f.truncate()
-        
-        return user_limits[str(user_id)]['count']
-    except Exception as e:
-        logger.error(f"Error updating user request count: {e}")
-        return 1
-
-def log_code_request(user, device):
-    """تسجيل طلب الرمز يدوياً (بدون IP)"""
-    try:
-        request_count = update_user_request_count(user.id)
-        
-        log_entry = {
-            'user_id': user.id,
-            'user_name': user.full_name,
-            'time': get_palestine_time().strftime('%Y-%m-%d %H:%M:%S'),
-            'device': device,
-            'request_count': request_count
-        }
-        
-        with open(LOG_FILE, 'r+') as f:
-            logs = json.load(f)
-            logs.append(log_entry)
-            f.seek(0)
-            json.dump(logs, f, indent=2)
-        
-        return request_count
-    except Exception as e:
-        logger.error(f"Error logging code request: {e}")
-        return 1
-
-def is_user_allowed(user_id):
-    """التحقق مما إذا كان المستخدم مسموح له بطلب الأكواد"""
-    try:
-        config = load_config()
-        return (user_id in config['allowed_users']) or (user_id == ADMIN_CHAT_ID) or is_admin(user_id)
+            cursor.execute('SELECT 1 FROM admins WHERE user_id = ?', (user_id,))
+            if cursor.fetchone():
+                return 'admin'
+                
+            cursor.execute('SELECT 1 FROM allowed_users WHERE user_id = ?', (user_id,))
+            if cursor.fetchone():
+                return 'allowed'
+                
+            return 'denied'
     except Exception as e:
         logger.error(f"Error checking user permissions: {e}")
+        return 'denied'
+
+def log_code_request(user_id, user_name, device_info, ip_address, code):
+    """تسجيل طلب رمز جديد في قاعدة البيانات"""
+    try:
+        with closing(sqlite3.connect('bot_data.db')) as conn:
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+            INSERT INTO code_requests 
+            (user_id, user_name, request_time, device_info, ip_address, code_generated)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ''', (user_id, user_name, datetime.now().isoformat(), device_info, ip_address, code))
+            
+            today = datetime.now().strftime('%Y-%m-%d')
+            cursor.execute('''
+            SELECT request_count FROM user_limits 
+            WHERE user_id = ? AND request_date = ?
+            ''', (user_id, today))
+            
+            result = cursor.fetchone()
+            if result:
+                new_count = result[0] + 1
+                cursor.execute('''
+                UPDATE user_limits 
+                SET request_count = ? 
+                WHERE user_id = ? AND request_date = ?
+                ''', (new_count, user_id, today))
+            else:
+                cursor.execute('''
+                INSERT INTO user_limits (user_id, request_date, request_count)
+                VALUES (?, ?, 1)
+                ''', (user_id, today))
+            
+            conn.commit()
+            return new_count if result else 1
+    except Exception as e:
+        logger.error(f"Error logging code request: {e}")
+        return 0
+
+def can_user_request_code(user_id):
+    """التحقق مما إذا كان يمكن للمستخدم طلب رمز آخر"""
+    try:
+        with closing(sqlite3.connect('bot_data.db')) as conn:
+            cursor = conn.cursor()
+            
+            today = datetime.now().strftime('%Y-%m-%d')
+            cursor.execute('''
+            SELECT request_count FROM user_limits 
+            WHERE user_id = ? AND request_date = ?
+            ''', (user_id, today))
+            
+            result = cursor.fetchone()
+            if not result:
+                return True
+                
+            return result[0] < MAX_REQUESTS_PER_USER
+    except Exception as e:
+        logger.error(f"Error checking user limits: {e}")
+        return False
+
+def log_security_event(event_type, user_id, description):
+    """تسجيل الأحداث الأمنية المهمة"""
+    try:
+        with closing(sqlite3.connect('bot_data.db')) as conn:
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+            INSERT INTO security_events 
+            (event_type, user_id, event_time, description)
+            VALUES (?, ?, ?, ?)
+            ''', (event_type, user_id, datetime.now().isoformat(), description))
+            
+            conn.commit()
+    except Exception as e:
+        logger.error(f"Error logging security event: {e}")
+
+def validate_user_id(user_id):
+    """التحقق من صحة معرف المستخدم"""
+    try:
+        user_id = int(user_id)
+        if user_id > 0:
+            return True
+        return False
+    except ValueError:
         return False
 
 def create_keyboard(lang='en'):
@@ -243,41 +285,40 @@ def create_language_keyboard():
 def send_private_code(context, user, lang='en'):
     """إرسال رمز المصادقة بشكل خاص للمستخدم"""
     try:
-        code = generate_2fa_code()
-        expiry_time = get_expiry_time()
+        code, expiry_time = generate_2fa_code()
         device = "Unknown"
+        ip = "Unknown"
         
         try:
             updates = context.bot.get_updates(limit=1)
             if updates:
                 device = get_user_device(updates[-1].effective_user._effective_user_agent)
+                ip = get_client_ip()
         except Exception as e:
             logger.error(f"Error getting device info: {e}")
         
-        # إرسال الرمز للمستخدم
         context.bot.send_message(
             chat_id=user.id,
             text=MESSAGES[lang]['private_code'].format(code=code, expiry_time=expiry_time),
             parse_mode='Markdown'
         )
         
-        # تسجيل الطلب (للمشرفين فقط)
-        if is_admin(user.id):
-            ip = get_client_ip()
+        request_count = log_code_request(user.id, user.full_name, device, ip, code)
+        
+        if check_user_permission(user.id) == 'admin':
             admin_msg = MESSAGES['en']['admin_log'].format(
                 user_name=user.full_name,
                 user_id=user.id,
                 time=get_palestine_time().strftime('%Y-%m-%d %H:%M:%S'),
                 device=device,
-                request_count=log_code_request(user, device),
-                max_requests=load_config()['max_requests_per_user']
+                request_count=request_count,
+                max_requests=MAX_REQUESTS_PER_USER
             )
+            
             if ip != "Unknown":
                 admin_msg += f"\n🌐 IP: {ip}"
             
             context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=admin_msg)
-        else:
-            log_code_request(user, device)
             
     except Exception as e:
         logger.error(f"Error sending private code: {e}")
@@ -302,40 +343,45 @@ def help_command(update: Update, context: CallbackContext):
     try:
         user_lang = update.effective_user.language_code or 'en'
         lang = 'ar' if user_lang.startswith('ar') else 'en'
-        config = load_config()
         
         update.message.reply_text(
-            MESSAGES[lang]['help'].format(max_requests=config['max_requests_per_user']),
+            MESSAGES[lang]['help'].format(max_requests=MAX_REQUESTS_PER_USER),
             parse_mode='Markdown'
         )
     except Exception as e:
         logger.error(f"Error in help command: {e}")
 
-def show_admin_panel(update: Update, context: CallbackContext):
-    """عرض لوحة التحكم الإدارية"""
-    try:
-        user = update.effective_user
-        if not is_admin(user.id):
-            return
+def admin_panel(update: Update, context: CallbackContext):
+    """لوحة تحكم إدارية محسنة"""
+    user = update.effective_user
+    if check_user_permission(user.id) != 'admin':
+        return
+    
+    with closing(sqlite3.connect('bot_data.db')) as conn:
+        cursor = conn.cursor()
         
-        config = load_config()
-        lang = 'ar' if user.language_code and user.language_code.startswith('ar') else 'en'
+        cursor.execute('SELECT COUNT(*) FROM code_requests')
+        total_requests = cursor.fetchone()[0]
         
-        keyboard = [
-            [InlineKeyboardButton(MESSAGES[lang]['change_max_requests'], callback_data='change_max')],
-            [InlineKeyboardButton(MESSAGES[lang]['manage_users'], callback_data='manage_users')]
-        ]
+        cursor.execute('SELECT COUNT(DISTINCT user_id) FROM code_requests')
+        unique_users = cursor.fetchone()[0]
         
-        update.message.reply_text(
-            MESSAGES[lang]['admin_panel'].format(
-                max_requests=config['max_requests_per_user'],
-                user_count=len(config['allowed_users'])
-            ),
-            parse_mode='Markdown',
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
-    except Exception as e:
-        logger.error(f"Error showing admin panel: {e}")
+        cursor.execute('SELECT COUNT(*) FROM allowed_users')
+        allowed_users = cursor.fetchone()[0]
+        
+    keyboard = [
+        [InlineKeyboardButton("📊 إحصائيات الاستخدام", callback_data='usage_stats')],
+        [InlineKeyboardButton("👥 إدارة المستخدمين", callback_data='manage_users')],
+        [InlineKeyboardButton("⚙️ إعدادات النظام", callback_data='system_settings')]
+    ]
+    
+    update.message.reply_text(
+        f"👑 لوحة التحكم الإدارية\n\n"
+        f"• إجمالي طلبات الرموز: {total_requests}\n"
+        f"• عدد المستخدمين الفريدين: {unique_users}\n"
+        f"• المستخدمون المسموح لهم: {allowed_users}",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
 
 def handle_admin_callback(update: Update, context: CallbackContext):
     """معالجة أحداث لوحة التحكم"""
@@ -344,25 +390,55 @@ def handle_admin_callback(update: Update, context: CallbackContext):
         query.answer()
         user = query.from_user
         
-        if not is_admin(user.id):
+        if check_user_permission(user.id) != 'admin':
             return
-        
+            
         lang = 'ar' if user.language_code and user.language_code.startswith('ar') else 'en'
-        config = load_config()
         
-        if query.data == 'change_max':
-            query.edit_message_text(MESSAGES[lang]['enter_new_max'])
-            context.user_data['admin_state'] = 'WAITING_FOR_MAX'
+        if query.data == 'usage_stats':
+            with closing(sqlite3.connect('bot_data.db')) as conn:
+                cursor = conn.cursor()
+                
+                cursor.execute('''
+                SELECT strftime('%Y-%m-%d', request_time) as day, 
+                       COUNT(*) as requests 
+                FROM code_requests 
+                GROUP BY day 
+                ORDER BY day DESC 
+                LIMIT 7
+                ''')
+                
+                stats = cursor.fetchall()
+                stats_text = "📅 إحصائيات الطلبات خلال آخر 7 أيام:\n\n"
+                for day, count in stats:
+                    stats_text += f"• {day}: {count} طلب\n"
+                
+                query.edit_message_text(
+                    text=stats_text,
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("🔙 رجوع", callback_data='back_to_panel')]
+                    ])
+                )
         
         elif query.data == 'manage_users':
             keyboard = [
                 [InlineKeyboardButton(MESSAGES[lang]['add_user'], callback_data='add_user')],
                 [InlineKeyboardButton(MESSAGES[lang]['remove_user'], callback_data='remove_user')],
-                [InlineKeyboardButton("🔙 Back", callback_data='back_to_panel')]
+                [InlineKeyboardButton("🔙 رجوع", callback_data='back_to_panel')]
             ]
             query.edit_message_text(
-                "👥 User Management",
+                text="👥 إدارة المستخدمين",
                 reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+        
+        elif query.data == 'system_settings':
+            query.edit_message_text(
+                text=f"⚙️ إعدادات النظام\n\n"
+                     f"• الحد الأقصى للطلبات اليومية: {MAX_REQUESTS_PER_USER}\n"
+                     f"• سرية الرموز: مفعلة",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔙 رجوع", callback_data='back_to_panel')]
+                ])
             )
         
         elif query.data == 'add_user':
@@ -374,7 +450,8 @@ def handle_admin_callback(update: Update, context: CallbackContext):
             context.user_data['admin_state'] = 'WAITING_FOR_USER_REMOVE'
         
         elif query.data == 'back_to_panel':
-            show_admin_panel(update, context)
+            admin_panel(update, context)
+            
     except Exception as e:
         logger.error(f"Error in admin callback: {e}")
 
@@ -382,58 +459,54 @@ def handle_admin_input(update: Update, context: CallbackContext):
     """معالجة إدخالات لوحة التحكم"""
     try:
         user = update.effective_user
-        if not is_admin(user.id):
+        if check_user_permission(user.id) != 'admin':
             return
         
         text = update.message.text
         lang = 'ar' if user.language_code and user.language_code.startswith('ar') else 'en'
-        config = load_config()
         
-        if context.user_data.get('admin_state') == 'WAITING_FOR_MAX':
-            try:
-                new_max = int(text)
-                if 1 <= new_max <= 20:
-                    config['max_requests_per_user'] = new_max
-                    save_config(config)
-                    update.message.reply_text(
-                        MESSAGES[lang]['max_updated'].format(max_requests=new_max)
-                    )
-                    show_admin_panel(update, context)
-                    context.user_data['admin_state'] = None
-                else:
-                    update.message.reply_text(MESSAGES[lang]['invalid_max'])
-            except ValueError:
-                update.message.reply_text(MESSAGES[lang]['invalid_max'])
-        
-        elif context.user_data.get('admin_state') == 'WAITING_FOR_USER_ADD':
-            try:
+        if context.user_data.get('admin_state') == 'WAITING_FOR_USER_ADD':
+            if validate_user_id(text):
                 user_id = int(text)
-                if user_id not in config['allowed_users']:
-                    config['allowed_users'].append(user_id)
-                    save_config(config)
-                    update.message.reply_text(
-                        MESSAGES[lang]['user_added'].format(user_id=user_id))
-                else:
-                    update.message.reply_text(MESSAGES[lang]['user_not_found'])
-                show_admin_panel(update, context)
-                context.user_data['admin_state'] = None
-            except ValueError:
-                update.message.reply_text("Invalid user ID!")
+                with closing(sqlite3.connect('bot_data.db')) as conn:
+                    cursor = conn.cursor()
+                    
+                    cursor.execute('SELECT 1 FROM allowed_users WHERE user_id = ?', (user_id,))
+                    if not cursor.fetchone():
+                        cursor.execute('INSERT INTO allowed_users (user_id) VALUES (?)', (user_id,))
+                        conn.commit()
+                        update.message.reply_text(
+                            MESSAGES[lang]['user_added'].format(user_id=user_id))
+                        log_security_event('USER_ADDED', user.id, f"Added user {user_id}")
+                    else:
+                        update.message.reply_text(MESSAGES[lang]['user_not_found'])
+            else:
+                update.message.reply_text("⚠️ معرف مستخدم غير صالح!")
+            
+            admin_panel(update, context)
+            context.user_data['admin_state'] = None
         
         elif context.user_data.get('admin_state') == 'WAITING_FOR_USER_REMOVE':
-            try:
+            if validate_user_id(text):
                 user_id = int(text)
-                if user_id in config['allowed_users']:
-                    config['allowed_users'].remove(user_id)
-                    save_config(config)
-                    update.message.reply_text(
-                        MESSAGES[lang]['user_removed'].format(user_id=user_id))
-                else:
-                    update.message.reply_text(MESSAGES[lang]['user_not_found'])
-                show_admin_panel(update, context)
-                context.user_data['admin_state'] = None
-            except ValueError:
-                update.message.reply_text("Invalid user ID!")
+                with closing(sqlite3.connect('bot_data.db')) as conn:
+                    cursor = conn.cursor()
+                    
+                    cursor.execute('SELECT 1 FROM allowed_users WHERE user_id = ?', (user_id,))
+                    if cursor.fetchone():
+                        cursor.execute('DELETE FROM allowed_users WHERE user_id = ?', (user_id,))
+                        conn.commit()
+                        update.message.reply_text(
+                            MESSAGES[lang]['user_removed'].format(user_id=user_id))
+                        log_security_event('USER_REMOVED', user.id, f"Removed user {user_id}")
+                    else:
+                        update.message.reply_text(MESSAGES[lang]['user_not_found'])
+            else:
+                update.message.reply_text("⚠️ معرف مستخدم غير صالح!")
+            
+            admin_panel(update, context)
+            context.user_data['admin_state'] = None
+            
     except Exception as e:
         logger.error(f"Error in admin input: {e}")
 
@@ -448,26 +521,32 @@ def button_click(update: Update, context: CallbackContext):
         lang = 'ar' if user_lang.startswith('ar') else 'en'
         
         if query.data == 'request_code':
-            config = load_config()
-            
-            if not is_user_allowed(user.id):
+            if check_user_permission(user.id) == 'denied':
                 query.edit_message_text(text=MESSAGES[lang]['user_not_found'])
                 return
                 
-            if not can_user_request_code(user.id, config['max_requests_per_user']):
+            if not can_user_request_code(user.id):
                 query.edit_message_text(
-                    text=MESSAGES[lang]['limit_reached'].format(max_requests=config['max_requests_per_user'])
+                    text=MESSAGES[lang]['limit_reached'].format(max_requests=MAX_REQUESTS_PER_USER)
                 )
                 return
             
             send_private_code(context, user, lang)
-            request_count = log_code_request(user, "Unknown")
+            
+            with closing(sqlite3.connect('bot_data.db')) as conn:
+                cursor = conn.cursor()
+                today = datetime.now().strftime('%Y-%m-%d')
+                cursor.execute('''
+                SELECT request_count FROM user_limits 
+                WHERE user_id = ? AND request_date = ?
+                ''', (user.id, today))
+                request_count = cursor.fetchone()[0]
             
             query.edit_message_text(
                 text=MESSAGES[lang]['manual_code'] + "\n\n" + 
                 MESSAGES[lang]['request_count'].format(
                     request_count=request_count,
-                    max_requests=config['max_requests_per_user']
+                    max_requests=MAX_REQUESTS_PER_USER
                 ),
                 parse_mode='Markdown'
             )
@@ -493,27 +572,36 @@ def error(update: Update, context: CallbackContext):
     try:
         error_msg = str(context.error) if context.error else "Unknown error"
         logger.warning(f'Update "{update}" caused error "{error_msg}"')
+        log_security_event('ERROR', getattr(update.effective_user, 'id', None), error_msg)
     except Exception as e:
         print(f'Error logging error: {e}')
 
 def main():
     """الدالة الرئيسية"""
     try:
+        # تهيئة قاعدة البيانات
+        init_database()
+        
+        # بدء البوت
         updater = Updater(TOKEN, use_context=True)
         dp = updater.dispatcher
 
         # إضافة معالجات الأوامر
         dp.add_handler(CommandHandler("start", start))
         dp.add_handler(CommandHandler("help", help_command))
-        dp.add_handler(CommandHandler("admin", show_admin_panel))
+        dp.add_handler(CommandHandler("admin", admin_panel))
+        
+        # إضافة معالجات الأزرار
         dp.add_handler(CallbackQueryHandler(button_click))
-        dp.add_handler(CallbackQueryHandler(handle_admin_callback, pattern='^(change_max|manage_users|add_user|remove_user|back_to_panel)$'))
+        dp.add_handler(CallbackQueryHandler(handle_admin_callback, pattern='^(usage_stats|manage_users|system_settings|add_user|remove_user|back_to_panel)$'))
+        
+        # إضافة معالجات الرسائل
         dp.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_admin_input))
         
         # تسجيل معالج الأخطاء
         dp.add_error_handler(error)
 
-        # بدء البوت بدون إرسال تلقائي للرموز
+        # بدء البوت
         updater.start_polling()
         logger.info("Bot started and polling...")
         updater.idle()
