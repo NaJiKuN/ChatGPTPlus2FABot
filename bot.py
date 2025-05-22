@@ -25,7 +25,8 @@ LOG_FILE = os.path.join(BOT_DIR, "code_requests.log")
 CONFIG_FILE = os.path.join(BOT_DIR, "bot_config.json")
 USER_LIMITS_FILE = os.path.join(BOT_DIR, "user_limits.json")
 COPY_LOGS_FILE = os.path.join(BOT_DIR, "copy_logs.json")
-DEFAULT_MAX_COPIES = 5  # الحد الافتراضي لنسخ الرموز
+REQUEST_LOGS_FILE = os.path.join(BOT_DIR, "request_logs.json")
+DEFAULT_MAX_COPIES = 5
 
 # تهيئة التسجيل
 logging.basicConfig(
@@ -46,6 +47,7 @@ def init_files():
     defaults = {
         "max_copies_per_user": DEFAULT_MAX_COPIES,
         "allowed_users": [],
+        "admins": ADMIN_CHAT_IDS,
         "user_settings": {}
     }
     
@@ -53,49 +55,60 @@ def init_files():
         with open(CONFIG_FILE, 'w') as f:
             json.dump(defaults, f, indent=2)
 
-    if not os.path.exists(COPY_LOGS_FILE):
-        with open(COPY_LOGS_FILE, 'w') as f:
-            json.dump([], f)
+    for file in [LOG_FILE, COPY_LOGS_FILE, REQUEST_LOGS_FILE]:
+        if not os.path.exists(file):
+            with open(file, 'w') as f:
+                json.dump([], f)
 
 init_files()
 
 # دعم اللغات
 MESSAGES = {
     'en': {
-        'start': "👋 Welcome to ChatGPTPlus2FA Bot!\n\nI automatically send 2FA codes every 5 minutes to the group.",
-        'help': "🤖 *Bot Help*\n\nCommands:\n/start - Start bot\n/help - Show help\n/settings - User settings\n/admin - Admin panel (admins only)",
+        'start': "👋 Welcome to ChatGPTPlus2FA Bot!",
+        'help': "🤖 *Bot Help*\n\nCommands:\n/start - Start bot\n/help - Show help\n/settings - User settings\n/admin - Admin panel",
         'settings': "⚙️ *Your Settings*\n\n📋 Copies today: {copies}/{max_copies}\n🌐 Language: {language}",
         'new_code': "🔑 New Authentication Code\n\nClick below to copy",
         'copy': "📋 Copy Code",
-        'code_copied': "✅ Code copied!\n\n`{code}`\nValid for 10 minutes.\n📋 Copies left today: {remaining}/{max_copies}",
-        'admin_panel': "👑 *Admin Panel*\n\n📋 Max copies per user: {max_copies}\n👥 Allowed users: {user_count}",
-        'admin_only': "⚠️ This command is for admins only!",
-        'limit_reached': "⚠️ Daily copy limit reached ({max_copies})",
+        'code_copied': "✅ Code copied to clipboard!\n\n🔄 Copies left today: {remaining}/{max_copies}",
+        'admin_panel': "👑 *Admin Panel*\n\n📋 Max copies: {max_copies}\n👥 Allowed users: {user_count}",
+        'admin_only': "⚠️ Admins only!",
+        'limit_reached': "⚠️ Daily limit reached ({max_copies})",
         'change_lang': "🌐 Change Language",
         'lang_changed': "✅ Language changed to {language}",
-        'user_log': "👤 User: {user_name} (ID: {user_id})\n📅 Date: {date}\n📋 Action: Code copy\n🔄 Copies today: {copies}/{max_copies}",
-        'invalid_command': "⚠️ Invalid command. Use /help to see available commands."
+        'user_log': "👤 User: {user_name} (ID: {user_id})\n📅 Date: {date}\n📋 Action: {action}\n🔄 Copies today: {copies}/{max_copies}",
+        'enter_user_id': "Please enter user ID:",
+        'user_added': "✅ User {user_id} added",
+        'user_removed': "✅ User {user_id} removed",
+        'user_not_found': "⚠️ User not found",
+        'enter_max_copies': "Enter new max copies (1-20):",
+        'max_copies_updated': "✅ Max copies set to {max_copies}",
+        'invalid_input': "⚠️ Invalid input",
+        'request_log': "🔒 Manual code request by {user_name} (ID: {user_id})"
     },
     'ar': {
-        'start': "👋 مرحبًا ببوت المصادقة!\n\nسأرسل رموز المصادقة تلقائيًا كل 5 دقائق للمجموعة.",
-        'help': "🤖 *مساعدة البوت*\n\nالأوامر:\n/start - بدء البوت\n/help - المساعدة\n/settings - الإعدادات\n/admin - لوحة التحكم (للمشرفين فقط)",
+        'start': "👋 مرحبًا ببوت المصادقة!",
+        'help': "🤖 *مساعدة البوت*\n\nالأوامر:\n/start - بدء البوت\n/help - المساعدة\n/settings - الإعدادات\n/admin - لوحة التحكم",
         'settings': "⚙️ *إعداداتك*\n\n📋 نسخ اليوم: {copies}/{max_copies}\n🌐 اللغة: {language}",
         'new_code': "🔑 رمز مصادقة جديد\n\nاضغط لنسخ الرمز",
         'copy': "📋 نسخ الرمز",
-        'code_copied': "✅ تم النسخ!\n\n`{code}`\nصالح لمدة 10 دقائق.\n📋 المتبقي اليوم: {remaining}/{max_copies}",
-        'admin_panel': "👑 *لوحة التحكم*\n\n📋 الحد الأقصى للنسخ: {max_copies}\n👥 المستخدمون المسموح لهم: {user_count}",
-        'admin_only': "⚠️ هذا الأمر للمشرفين فقط!",
+        'code_copied': "✅ تم نسخ الرمز!\n\n🔄 المتبقي اليوم: {remaining}/{max_copies}",
+        'admin_panel': "👑 *لوحة التحكم*\n\n📋 الحد الأقصى: {max_copies}\n👥 المستخدمون المسموح لهم: {user_count}",
+        'admin_only': "⚠️ للمشرفين فقط!",
         'limit_reached': "⚠️ وصلت للحد اليومي ({max_copies})",
         'change_lang': "🌐 تغيير اللغة",
         'lang_changed': "✅ تم تغيير اللغة إلى {language}",
-        'user_log': "👤 المستخدم: {user_name} (ID: {user_id})\n📅 التاريخ: {date}\n📋 الإجراء: نسخ رمز\n🔄 نسخ اليوم: {copies}/{max_copies}",
-        'invalid_command': "⚠️ أمر غير صحيح. استخدم /help لرؤية الأوامر المتاحة."
+        'user_log': "👤 المستخدم: {user_name} (ID: {user_id})\n📅 التاريخ: {date}\n📋 الإجراء: {action}\n🔄 نسخ اليوم: {copies}/{max_copies}",
+        'enter_user_id': "الرجاء إدخال معرف المستخدم:",
+        'user_added': "✅ تمت إضافة المستخدم {user_id}",
+        'user_removed': "✅ تمت إزالة المستخدم {user_id}",
+        'user_not_found': "⚠️ المستخدم غير موجود",
+        'enter_max_copies': "أدخل الحد الأقصى الجديد للنسخ (1-20):",
+        'max_copies_updated': "✅ تم تعيين الحد الأقصى للنسخ إلى {max_copies}",
+        'invalid_input': "⚠️ إدخال غير صحيح",
+        'request_log': "🔒 طلب رمز يدوي من {user_name} (ID: {user_id})"
     }
 }
-
-def is_admin(user_id):
-    """التحقق من صلاحية المسؤول"""
-    return user_id in ADMIN_CHAT_IDS
 
 def get_config():
     """الحصول على إعدادات البوت"""
@@ -106,6 +119,11 @@ def save_config(config):
     """حفظ إعدادات البوت"""
     with open(CONFIG_FILE, 'w') as f:
         json.dump(config, f, indent=2)
+
+def is_admin(user_id):
+    """التحقق من صلاحية المسؤول"""
+    config = get_config()
+    return user_id in config.get('admins', ADMIN_CHAT_IDS)
 
 def get_user_settings(user_id):
     """الحصول على إعدادات المستخدم"""
@@ -156,50 +174,21 @@ def update_copy_count(user_id):
     
     settings['last_copy_date'] = today
     update_user_settings(user_id, settings)
-    
     return settings['copies_today']
 
-def log_copy_action(user, code):
-    """تسجيل عملية النسخ"""
+def log_action(log_file, action_data):
+    """تسجيل أي عمل في الملفات"""
     try:
-        with open(COPY_LOGS_FILE, 'r+') as f:
+        with open(log_file, 'r+') as f:
             logs = json.load(f)
-            
-            can_copy, max_copies, copies_today = can_user_copy(user.id)
-            log_entry = {
-                'user_id': user.id,
-                'user_name': user.full_name,
-                'date': get_palestine_time().strftime('%Y-%m-%d %H:%M:%S'),
-                'code': code,
-                'copies_today': copies_today + 1,
-                'max_copies': max_copies
-            }
-            
-            logs.append(log_entry)
+            logs.append(action_data)
             f.seek(0)
             json.dump(logs, f, indent=2)
-            
-        # إرسال السجل للمسؤولين
-        for admin_id in ADMIN_CHAT_IDS:
-            try:
-                lang = get_user_lang(admin_id)
-                context.bot.send_message(
-                    chat_id=admin_id,
-                    text=MESSAGES[lang]['user_log'].format(
-                        user_name=user.full_name,
-                        user_id=user.id,
-                        date=log_entry['date'],
-                        copies=log_entry['copies_today'],
-                        max_copies=max_copies
-                    )
-                )
-            except Exception as e:
-                logger.error(f"Error sending log to admin {admin_id}: {e}")
     except Exception as e:
-        logger.error(f"Error logging copy action: {e}")
+        logger.error(f"Error logging action: {e}")
 
 def create_copy_button(lang='en'):
-    """إنشاء زر النسخ"""
+    """إنشاء زر النسخ مع دعم نسخ الحافظة"""
     return InlineKeyboardMarkup([
         [InlineKeyboardButton(MESSAGES[lang]['copy'], callback_data='copy_code')],
         [InlineKeyboardButton(MESSAGES[lang]['change_lang'], callback_data='change_lang')]
@@ -211,10 +200,26 @@ def create_lang_keyboard(user_id):
     return InlineKeyboardMarkup([
         [
             InlineKeyboardButton("English 🇬🇧" + (" ✅" if current_lang == 'en' else ""), 
-                               callback_data='set_lang_en'),
+            callback_data='set_lang_en'),
             InlineKeyboardButton("العربية 🇸🇦" + (" ✅" if current_lang == 'ar' else ""), 
-                               callback_data='set_lang_ar')
+            callback_data='set_lang_ar')
         ]
+    ])
+
+def create_admin_keyboard(lang='en'):
+    """إنشاء لوحة تحكم المسؤول"""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("✏️ Change Max Copies", callback_data='change_max_copies')],
+        [InlineKeyboardButton("👥 Manage Users", callback_data='manage_users')],
+        [InlineKeyboardButton("📋 View Logs", callback_data='view_logs')]
+    ])
+
+def create_user_management_keyboard(lang='en'):
+    """إنشاء لوحة إدارة المستخدمين"""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("➕ Add User", callback_data='add_user')],
+        [InlineKeyboardButton("➖ Remove User", callback_data='remove_user')],
+        [InlineKeyboardButton("🔙 Back", callback_data='back_to_admin')]
     ])
 
 def send_auto_code(context: CallbackContext):
@@ -225,7 +230,6 @@ def send_auto_code(context: CallbackContext):
             text=MESSAGES['en']['new_code'],
             reply_markup=create_copy_button('en')
         )
-        logger.info("Sent auto code to group")
     except Exception as e:
         logger.error(f"Error in send_auto_code: {e}")
 
@@ -235,19 +239,13 @@ def start(update: Update, context: CallbackContext):
         user = update.effective_user
         lang = get_user_lang(user.id)
         
-        # إرسال رسالة الترحيب
+        if str(user.id) not in get_config()['user_settings']:
+            update_user_settings(user.id, {'lang': lang, 'copies_today': 0, 'last_copy_date': None})
+        
         update.message.reply_text(
             MESSAGES[lang]['start'],
-            parse_mode='Markdown'
+            reply_markup=create_copy_button(lang)
         )
-        
-        # إرسال رسالة المساعدة إذا كان المستخدم جديدًا
-        if str(user.id) not in get_config()['user_settings']:
-            update.message.reply_text(
-                MESSAGES[lang]['help'],
-                parse_mode='Markdown'
-            )
-            
     except Exception as e:
         logger.error(f"Error in start command: {e}")
 
@@ -256,7 +254,6 @@ def help_command(update: Update, context: CallbackContext):
     try:
         user = update.effective_user
         lang = get_user_lang(user.id)
-        
         update.message.reply_text(
             MESSAGES[lang]['help'],
             parse_mode='Markdown'
@@ -273,10 +270,7 @@ def settings_command(update: Update, context: CallbackContext):
         settings = get_user_settings(user.id)
         
         today = get_palestine_time().strftime('%Y-%m-%d')
-        if settings.get('last_copy_date') != today:
-            copies_today = 0
-        else:
-            copies_today = settings.get('copies_today', 0)
+        copies_today = 0 if settings.get('last_copy_date') != today else settings.get('copies_today', 0)
         
         language_name = "English" if lang == 'en' else "العربية"
         
@@ -304,18 +298,13 @@ def admin_command(update: Update, context: CallbackContext):
         lang = get_user_lang(user.id)
         config = get_config()
         
-        keyboard = [
-            [InlineKeyboardButton("✏️ Change Max Copies", callback_data='change_max_copies')],
-            [InlineKeyboardButton("👥 View Copy Logs", callback_data='view_logs')]
-        ]
-        
         update.message.reply_text(
             MESSAGES[lang]['admin_panel'].format(
                 max_copies=config['max_copies_per_user'],
                 user_count=len(config['allowed_users'])
             ),
             parse_mode='Markdown',
-            reply_markup=InlineKeyboardMarkup(keyboard)
+            reply_markup=create_admin_keyboard(lang)
         )
     except Exception as e:
         logger.error(f"Error in admin command: {e}")
@@ -339,19 +328,35 @@ def button_click(update: Update, context: CallbackContext):
             copies_today = update_copy_count(user.id)
             remaining = max(0, max_copies - copies_today)
             
-            # إرسال الرمز للمستخدم
+            # إرسال الرمز مع زر النسخ الفعلي
             context.bot.send_message(
                 chat_id=user.id,
-                text=MESSAGES[lang]['code_copied'].format(
-                    code=code,
-                    remaining=remaining,
-                    max_copies=max_copies
-                ),
-                parse_mode='Markdown'
+                text=f"✅ {MESSAGES[lang]['code_copied'].format(remaining=remaining, max_copies=max_copies)}\n\n<code>{code}</code>",
+                parse_mode='HTML',
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton(
+                        MESSAGES[lang]['copy'],
+                        callback_data=f'copy_{code}'
+                    )]
+                ])
             )
             
             # تسجيل العملية
-            log_copy_action(user, code)
+            log_action(COPY_LOGS_FILE, {
+                'user_id': user.id,
+                'user_name': user.full_name,
+                'date': get_palestine_time().strftime('%Y-%m-%d %H:%M:%S'),
+                'action': 'copy_code',
+                'copies_today': copies_today,
+                'max_copies': max_copies
+            })
+            
+        elif query.data.startswith('copy_'):
+            code = query.data.split('_')[1]
+            query.edit_message_text(
+                text=f"✅ {MESSAGES[lang]['code_copied'].format(remaining='?', max_copies='?')}\n\n<code>{code}</code>",
+                parse_mode='HTML'
+            )
             
         elif query.data == 'change_lang':
             query.edit_message_text(
@@ -369,61 +374,113 @@ def button_click(update: Update, context: CallbackContext):
                 )
         
         elif query.data == 'change_max_copies' and is_admin(user.id):
-            query.edit_message_text("Please enter the new maximum copies per user (1-20):")
-            context.user_data['waiting_for_max'] = True
+            query.edit_message_text(MESSAGES[lang]['enter_max_copies'])
+            context.user_data['admin_action'] = 'change_max_copies'
+        
+        elif query.data == 'manage_users' and is_admin(user.id):
+            query.edit_message_text(
+                "👥 User Management / إدارة المستخدمين",
+                reply_markup=create_user_management_keyboard(lang)
+            )
+        
+        elif query.data == 'add_user' and is_admin(user.id):
+            query.edit_message_text(MESSAGES[lang]['enter_user_id'])
+            context.user_data['admin_action'] = 'add_user'
+        
+        elif query.data == 'remove_user' and is_admin(user.id):
+            query.edit_message_text(MESSAGES[lang]['enter_user_id'])
+            context.user_data['admin_action'] = 'remove_user'
         
         elif query.data == 'view_logs' and is_admin(user.id):
             try:
                 with open(COPY_LOGS_FILE, 'r') as f:
                     logs = json.load(f)
                     if not logs:
-                        query.edit_message_text("No copy logs available yet.")
+                        query.edit_message_text("No logs available yet / لا توجد سجلات متاحة بعد")
                         return
                     
                     # إرسال آخر 10 عمليات نسخ
                     recent_logs = logs[-10:]
-                    log_text = "📋 *Last 10 Copy Logs*\n\n" if lang == 'en' else "📋 *آخر 10 عمليات نسخ*\n\n"
+                    log_text = "📋 Last 10 Copy Logs / آخر 10 عمليات نسخ:\n\n"
                     for log in reversed(recent_logs):
                         log_text += f"👤 {log['user_name']} (ID: {log['user_id']})\n"
                         log_text += f"📅 {log['date']}\n"
                         log_text += f"🔄 {log['copies_today']}/{log['max_copies']} copies\n\n"
                     
-                    query.edit_message_text(log_text, parse_mode='Markdown')
+                    query.edit_message_text(log_text)
             except Exception as e:
                 logger.error(f"Error viewing logs: {e}")
-                error_msg = "Error loading logs." if lang == 'en' else "حدث خطأ في تحميل السجلات."
-                query.edit_message_text(error_msg)
+                query.edit_message_text("Error loading logs / حدث خطأ في تحميل السجلات")
+        
+        elif query.data == 'back_to_admin' and is_admin(user.id):
+            admin_command(update, context)
     
     except Exception as e:
         logger.error(f"Error in button click: {e}")
 
-def handle_admin_input(update: Update, context: CallbackContext):
-    """معالجة إدخالات المسؤول"""
+def handle_message(update: Update, context: CallbackContext):
+    """معالجة الرسائل النصية"""
     try:
         user = update.effective_user
-        if not is_admin(user.id):
-            return
+        message = update.message.text
+        lang = get_user_lang(user.id)
         
-        if context.user_data.get('waiting_for_max'):
-            try:
-                new_max = int(update.message.text)
-                if 1 <= new_max <= 20:
+        if 'admin_action' in context.user_data:
+            action = context.user_data['admin_action']
+            
+            if action == 'change_max_copies':
+                try:
+                    new_max = int(message)
+                    if 1 <= new_max <= 20:
+                        config = get_config()
+                        config['max_copies_per_user'] = new_max
+                        save_config(config)
+                        
+                        update.message.reply_text(
+                            MESSAGES[lang]['max_copies_updated'].format(max_copies=new_max)
+                        )
+                        context.user_data.pop('admin_action', None)
+                        admin_command(update, context)
+                    else:
+                        update.message.reply_text(MESSAGES[lang]['invalid_input'])
+                except ValueError:
+                    update.message.reply_text(MESSAGES[lang]['invalid_input'])
+            
+            elif action in ['add_user', 'remove_user']:
+                try:
+                    user_id = int(message)
                     config = get_config()
-                    config['max_copies_per_user'] = new_max
-                    save_config(config)
                     
-                    lang = get_user_lang(user.id)
-                    success_msg = f"✅ Max copies per user set to {new_max}" if lang == 'en' else f"✅ تم تعيين الحد الأقصى للنسخ إلى {new_max}"
-                    update.message.reply_text(success_msg)
+                    if action == 'add_user':
+                        if user_id not in config['allowed_users']:
+                            config['allowed_users'].append(user_id)
+                            save_config(config)
+                            update.message.reply_text(
+                                MESSAGES[lang]['user_added'].format(user_id=user_id))
+                        else:
+                            update.message.reply_text(
+                                MESSAGES[lang]['user_not_found'])
                     
-                    context.user_data['waiting_for_max'] = False
+                    elif action == 'remove_user':
+                        if user_id in config['allowed_users']:
+                            config['allowed_users'].remove(user_id)
+                            save_config(config)
+                            update.message.reply_text(
+                                MESSAGES[lang]['user_removed'].format(user_id=user_id))
+                        else:
+                            update.message.reply_text(
+                                MESSAGES[lang]['user_not_found'])
+                    
+                    context.user_data.pop('admin_action', None)
                     admin_command(update, context)
-                else:
-                    update.message.reply_text("Please enter a number between 1 and 20.")
-            except ValueError:
-                update.message.reply_text("Invalid input. Please enter a number between 1 and 20.")
+                except ValueError:
+                    update.message.reply_text(MESSAGES[lang]['invalid_input'])
+        
+        else:
+            update.message.reply_text(MESSAGES[lang]['invalid_command'])
+    
     except Exception as e:
-        logger.error(f"Error in handle_admin_input: {e}")
+        logger.error(f"Error in handle_message: {e}")
 
 def error(update: Update, context: CallbackContext):
     """تسجيل الأخطاء"""
@@ -445,9 +502,9 @@ def main():
         dp.add_handler(CommandHandler("settings", settings_command))
         dp.add_handler(CommandHandler("admin", admin_command))
         
-        # معالجات الأزرار والإدخال
+        # معالجات الأزرار والرسائل
         dp.add_handler(CallbackQueryHandler(button_click))
-        dp.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_admin_input))
+        dp.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_message))
         
         dp.add_error_handler(error)
 
