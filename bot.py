@@ -1,4 +1,4 @@
-#!/usr/bin/env python3 v1.3
+#!/usr/bin/env python3 v1.4
 import os
 import logging
 import requests
@@ -23,10 +23,10 @@ BOT_ID = 792534650
 TOTP_SECRET = "ZV3YUXYVPOZSUOT43SKVDGFFVWBZXOVI"
 
 # Global variables
-allowed_users = {ADMIN_ID: {'limit': 5, 'used': 0, 'name': 'Admin'}}  # {user_id: {limit: int, used: int, name: str}}
+allowed_users = {ADMIN_ID: {'limit': 5, 'used': 0, 'name': 'Admin'}}
 user_language = {}
 last_code_sent_time = None
-pending_actions = {}  # {admin_id: {'action': str, 'data': dict}}
+pending_actions = {}
 
 # Set up logging
 logging.basicConfig(
@@ -44,7 +44,7 @@ texts = {
         'code_message': '🔐 *2FA Verification Code*\n\nNext code at: {next_time}',
         'copy_button': '📋 Copy Code',
         'language_button': '🌐 Change Language',
-        'copy_success': '✅ Code copied successfully! Valid for 30 seconds.\nRemaining copies today: {remaining}/{limit}',
+        'copy_success': '✅ Code copied to your private chat! Valid for 30 seconds.',
         'copy_limit_reached': '❌ Daily copy limit reached ({used}/{limit}). Contact admin.',
         'not_allowed': '❌ You are not allowed to copy codes.',
         'admin_menu': '🛠 *Admin Menu*',
@@ -52,22 +52,26 @@ texts = {
         'remove_user': '➖ Remove User',
         'set_limit': '📝 Set User Limit',
         'list_users': '👥 List All Users',
-        'user_added': '✅ User added successfully with limit {limit} copies/day.',
-        'user_removed': '✅ User removed successfully.',
-        'limit_set': '✅ Daily limit set to {limit} for user {user_name} (ID: {user_id}).',
-        'invalid_user_id': '❌ Invalid user ID.',
+        'user_added': '✅ User {user_id} added successfully with limit {limit} copies/day.',
+        'user_removed': '✅ User {user_id} removed successfully.',
+        'user_not_found': '❌ User {user_id} not found.',
+        'limit_updated': '✅ Daily limit updated to {limit} for user {user_name} (ID: {user_id}).',
+        'invalid_input': '❌ Invalid input. Please send a valid number.',
         'user_info': '👤 *User Info*\n\n🔹 Name: {user_name}\n🔹 ID: `{user_id}`\n🔹 IP: `{ip}`\n🔹 Time: `{time}`\n🔹 Code: `{code}`',
         'user_list': '👥 *User List*\n\n{users_list}',
         'user_entry': '🔹 {user_name} (ID: {user_id}) - {used}/{limit} copies today',
         'send_user_id': 'Please send the user ID:',
-        'send_new_limit': 'Please send the new daily limit for this user:',
-        'send_user_name': 'Please send the user name:'
+        'current_limit': 'Current limit for {user_name} (ID: {user_id}): {limit}\n\nSelect action:',
+        'increase': '➕ Increase',
+        'decrease': '➖ Decrease',
+        'set_custom': '🔢 Set Custom',
+        'enter_new_limit': 'Please enter the new daily limit (1-50):'
     },
     'ar': {
         'code_message': '🔐 *رمز المصادقة الثنائية*\n\nالرمز التالي في: {next_time}',
         'copy_button': '📋 نسخ الرمز',
         'language_button': '🌐 تغيير اللغة',
-        'copy_success': '✅ تم نسخ الرمز بنجاح! صالح لمدة 30 ثانية.\nعدد النسخ المتبقية اليوم: {remaining}/{limit}',
+        'copy_success': '✅ تم نسخ الرمز إلى محادثتك الخاصة! صالح لمدة 30 ثانية.',
         'copy_limit_reached': '❌ تم الوصول إلى الحد اليومي للنسخ ({used}/{limit}). تواصل مع المسؤول.',
         'not_allowed': '❌ غير مسموح لك بنسخ الرموز.',
         'admin_menu': '🛠 *قائمة المسؤول*',
@@ -75,16 +79,20 @@ texts = {
         'remove_user': '➖ إزالة عضو',
         'set_limit': '📝 تعيين حد للمستخدم',
         'list_users': '👥 عرض جميع الأعضاء',
-        'user_added': '✅ تمت إضافة العضو بنجاح مع حد {limit} نسخة/يوم.',
-        'user_removed': '✅ تمت إزالة العضو بنجاح.',
-        'limit_set': '✅ تم تعيين الحد اليومي إلى {limit} للعضو {user_name} (ID: {user_id}).',
-        'invalid_user_id': '❌ معرّف العضو غير صالح.',
+        'user_added': '✅ تمت إضافة العضو {user_id} بنجاح مع حد {limit} نسخة/يوم.',
+        'user_removed': '✅ تمت إزالة العضو {user_id} بنجاح.',
+        'user_not_found': '❌ العضو {user_id} غير موجود.',
+        'limit_updated': '✅ تم تحديث الحد اليومي إلى {limit} للعضو {user_name} (ID: {user_id}).',
+        'invalid_input': '❌ إدخال غير صالح. الرجاء إرسال رقم صحيح.',
         'user_info': '👤 *معلومات العضو*\n\n🔹 الاسم: {user_name}\n🔹 الرقم: `{user_id}`\n🔹 الأيبي: `{ip}`\n🔹 الوقت: `{time}`\n🔹 الرمز: `{code}`',
         'user_list': '👥 *قائمة الأعضاء*\n\n{users_list}',
         'user_entry': '🔹 {user_name} (ID: {user_id}) - {used}/{limit} نسخ اليوم',
         'send_user_id': 'الرجاء إرسال معرف المستخدم:',
-        'send_new_limit': 'الرجاء إرسال الحد اليومي الجديد لهذا المستخدم:',
-        'send_user_name': 'الرجاء إرسال اسم المستخدم:'
+        'current_limit': 'الحد الحالي لـ {user_name} (ID: {user_id}): {limit}\n\nاختر الإجراء:',
+        'increase': '➕ زيادة',
+        'decrease': '➖ نقصان',
+        'set_custom': '🔢 تعيين مخصص',
+        'enter_new_limit': 'الرجاء إدخال الحد اليومي الجديد (1-50):'
     }
 }
 
@@ -111,7 +119,7 @@ def send_2fa_code(context: CallbackContext):
     next_time = (datetime.now(gaza_tz) + timedelta(minutes=5)).strftime('%I:%M:%S %p')
     last_code_sent_time = datetime.now(gaza_tz)
     
-    lang = 'en'  # Default language for group messages
+    lang = 'en'
     
     keyboard = [
         [InlineKeyboardButton(texts[lang]['copy_button'], callback_data=f'copy_{code}')],
@@ -136,13 +144,9 @@ def handle_copy(update: Update, context: CallbackContext):
     lang = get_user_language(user_id)
     code = query.data.split('_')[1]
     
-    # Add user to allowed_users if not exists (with default limit 5)
     if user_id not in allowed_users:
-        allowed_users[user_id] = {
-            'limit': 5,
-            'used': 0,
-            'name': user_name
-        }
+        query.answer(text=texts[lang]['not_allowed'], show_alert=True)
+        return
     
     user_data = allowed_users[user_id]
     
@@ -156,17 +160,18 @@ def handle_copy(update: Update, context: CallbackContext):
         )
         return
     
-    user_data['used'] += 1
-    remaining = user_data['limit'] - user_data['used']
-    
-    # Simulate copy to clipboard (shows confirmation message)
-    query.answer(
-        text=texts[lang]['copy_success'].format(
-            remaining=remaining,
-            limit=user_data['limit']
-        ),
-        show_alert=True
-    )
+    # Send code to private chat
+    try:
+        context.bot.send_message(
+            chat_id=user_id,
+            text=f"Your 2FA code: `{code}`\n\nThis code is valid for 30 seconds.",
+            parse_mode='Markdown'
+        )
+        user_data['used'] += 1
+        query.answer(text=texts[lang]['copy_success'], show_alert=True)
+    except Exception as e:
+        query.answer(text="❌ Failed to send code. Please start a chat with the bot first.", show_alert=True)
+        return
     
     # Log to admin
     ip_address = get_user_ip()
@@ -236,19 +241,19 @@ def admin_actions(update: Update, context: CallbackContext):
     action = query.data
 
     if action == 'admin_add_user':
-        pending_actions[user_id] = {'action': 'add_user', 'step': 1}
+        pending_actions[user_id] = {'action': 'add_user'}
         context.bot.send_message(
             chat_id=user_id,
             text=texts[lang]['send_user_id']
         )
     elif action == 'admin_remove_user':
-        pending_actions[user_id] = {'action': 'remove_user', 'step': 1}
+        pending_actions[user_id] = {'action': 'remove_user'}
         context.bot.send_message(
             chat_id=user_id,
             text=texts[lang]['send_user_id']
         )
     elif action == 'admin_set_limit':
-        pending_actions[user_id] = {'action': 'set_limit', 'step': 1}
+        pending_actions[user_id] = {'action': 'set_limit'}
         context.bot.send_message(
             chat_id=user_id,
             text=texts[lang]['send_user_id']
@@ -292,78 +297,141 @@ def handle_admin_reply(update: Update, context: CallbackContext):
         return
     
     lang = get_user_language(user_id)
-    action_data = pending_actions[user_id]
     text = update.message.text
+    action = pending_actions[user_id]['action']
     
-    if action_data['action'] == 'add_user':
-        if action_data['step'] == 1:
-            try:
-                new_user_id = int(text)
-                action_data['user_id'] = new_user_id
-                action_data['step'] = 2
-                update.message.reply_text(texts[lang]['send_user_name'])
-            except ValueError:
-                update.message.reply_text(texts[lang]['invalid_user_id'])
-                del pending_actions[user_id]
-        elif action_data['step'] == 2:
-            user_name = text
-            new_user_id = action_data['user_id']
-            
+    try:
+        if action == 'add_user':
+            new_user_id = int(text)
             if new_user_id not in allowed_users:
                 allowed_users[new_user_id] = {
                     'limit': 5,
                     'used': 0,
-                    'name': user_name
+                    'name': f"User {new_user_id}"
                 }
                 update.message.reply_text(
-                    texts[lang]['user_added'].format(limit=5)
+                    texts[lang]['user_added'].format(
+                        user_id=new_user_id,
+                        limit=5
+                    )
                 )
             else:
-                update.message.reply_text("User already exists")
-            
+                update.message.reply_text(f"User {new_user_id} already exists")
             del pending_actions[user_id]
-    
-    elif action_data['action'] == 'remove_user':
-        try:
+        
+        elif action == 'remove_user':
             remove_user_id = int(text)
             if remove_user_id in allowed_users:
                 del allowed_users[remove_user_id]
-                update.message.reply_text(texts[lang]['user_removed'])
-            else:
-                update.message.reply_text("User not in allowed list")
-        except ValueError:
-            update.message.reply_text(texts[lang]['invalid_user_id'])
-        del pending_actions[user_id]
-    
-    elif action_data['action'] == 'set_limit':
-        if action_data['step'] == 1:
-            try:
-                target_user = int(text)
-                if target_user in allowed_users:
-                    action_data['target_user'] = target_user
-                    action_data['step'] = 2
-                    update.message.reply_text(texts[lang]['send_new_limit'])
-                else:
-                    update.message.reply_text("User not found")
-                    del pending_actions[user_id]
-            except ValueError:
-                update.message.reply_text(texts[lang]['invalid_user_id'])
-                del pending_actions[user_id]
-        elif action_data['step'] == 2:
-            try:
-                new_limit = int(text)
-                target_user = action_data['target_user']
-                allowed_users[target_user]['limit'] = new_limit
                 update.message.reply_text(
-                    texts[lang]['limit_set'].format(
-                        limit=new_limit,
-                        user_name=allowed_users[target_user]['name'],
-                        user_id=target_user
-                    )
+                    texts[lang]['user_removed'].format(user_id=remove_user_id)
                 )
-            except ValueError:
-                update.message.reply_text("Invalid limit value")
+            else:
+                update.message.reply_text(
+                    texts[lang]['user_not_found'].format(user_id=remove_user_id)
+                )
             del pending_actions[user_id]
+        
+        elif action == 'set_limit':
+            target_user = int(text)
+            if target_user in allowed_users:
+                user_data = allowed_users[target_user]
+                keyboard = [
+                    [
+                        InlineKeyboardButton(texts[lang]['increase'], callback_data=f'limit_inc_{target_user}'),
+                        InlineKeyboardButton(texts[lang]['decrease'], callback_data=f'limit_dec_{target_user}')
+                    ],
+                    [InlineKeyboardButton(texts[lang]['set_custom'], callback_data=f'limit_custom_{target_user}')]
+                ]
+                
+                update.message.reply_text(
+                    texts[lang]['current_limit'].format(
+                        user_name=user_data['name'],
+                        user_id=target_user,
+                        limit=user_data['limit']
+                    ),
+                    reply_markup=InlineKeyboardMarkup(keyboard)
+                )
+            else:
+                update.message.reply_text(
+                    texts[lang]['user_not_found'].format(user_id=target_user)
+                )
+            del pending_actions[user_id]
+    
+    except ValueError:
+        update.message.reply_text(texts[lang]['invalid_input'])
+        del pending_actions[user_id]
+
+def handle_limit_actions(update: Update, context: CallbackContext):
+    query = update.callback_query
+    user_id = query.from_user.id
+    if user_id != ADMIN_ID:
+        return
+    
+    lang = get_user_language(user_id)
+    data = query.data.split('_')
+    action = data[1]
+    target_user = int(data[2])
+    
+    if target_user not in allowed_users:
+        query.answer(text=texts[lang]['user_not_found'].format(user_id=target_user), show_alert=True)
+        return
+    
+    user_data = allowed_users[target_user]
+    
+    if action == 'inc':
+        user_data['limit'] += 1
+        query.answer(text="Limit increased by 1", show_alert=True)
+    elif action == 'dec':
+        if user_data['limit'] > 1:
+            user_data['limit'] -= 1
+            query.answer(text="Limit decreased by 1", show_alert=True)
+        else:
+            query.answer(text="Limit cannot be less than 1", show_alert=True)
+            return
+    elif action == 'custom':
+        pending_actions[user_id] = {'action': 'set_custom_limit', 'target_user': target_user}
+        context.bot.send_message(
+            chat_id=user_id,
+            text=texts[lang]['enter_new_limit']
+        )
+        query.answer()
+        return
+    
+    query.edit_message_text(
+        texts[lang]['limit_updated'].format(
+            limit=user_data['limit'],
+            user_name=user_data['name'],
+            user_id=target_user
+        )
+    )
+
+def handle_custom_limit(update: Update, context: CallbackContext):
+    user_id = update.effective_user.id
+    if user_id != ADMIN_ID or user_id not in pending_actions:
+        return
+    
+    lang = get_user_language(user_id)
+    action_data = pending_actions[user_id]
+    target_user = action_data['target_user']
+    
+    try:
+        new_limit = int(update.message.text)
+        if 1 <= new_limit <= 50:
+            allowed_users[target_user]['limit'] = new_limit
+            update.message.reply_text(
+                texts[lang]['limit_updated'].format(
+                    limit=new_limit,
+                    user_name=allowed_users[target_user]['name'],
+                    user_id=target_user
+                )
+            )
+        else:
+            update.message.reply_text("Limit must be between 1 and 50")
+    except ValueError:
+        update.message.reply_text(texts[lang]['invalid_input'])
+    
+    del pending_actions[user_id]
 
 def reset_daily_limits(context: CallbackContext):
     for user_data in allowed_users.values():
@@ -382,12 +450,14 @@ def main():
     dp.add_handler(CallbackQueryHandler(handle_copy, pattern='^copy_'))
     dp.add_handler(CallbackQueryHandler(change_language, pattern='^change_language$'))
     dp.add_handler(CallbackQueryHandler(admin_actions, pattern='^admin_'))
+    dp.add_handler(CallbackQueryHandler(handle_limit_actions, pattern='^limit_'))
     dp.add_handler(MessageHandler(Filters.text & Filters.reply, handle_admin_reply))
+    dp.add_handler(MessageHandler(Filters.text, handle_custom_limit))
     dp.add_error_handler(error_handler)
     
     jq = updater.job_queue
-    jq.run_repeating(send_2fa_code, interval=300, first=0)  # Send code every 5 minutes
-    jq.run_daily(reset_daily_limits, time=datetime.strptime("00:00", "%H:%M").time())  # Reset limits at midnight
+    jq.run_repeating(send_2fa_code, interval=300, first=0)
+    jq.run_daily(reset_daily_limits, time=datetime.strptime("00:00", "%H:%M").time())
     
     updater.start_polling()
     updater.idle()
