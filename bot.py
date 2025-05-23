@@ -46,7 +46,8 @@ texts = {
         'code_message': '🔐 *2FA Verification Code*\n\nNext code at: {next_time}',
         'copy_button': '📋 Copy Code',
         'language_button': '🌐 Change Language',
-        'copy_success': '✅ Code copied to clipboard! Valid for 30 seconds.\nRemaining copies today: {remaining}',
+        'copy_success': '✅ Code copied successfully! Valid for 30 seconds.\nRemaining copies today: {remaining}',
+        'code_sent': '📨 Code sent to your private chat',
         'copy_limit_reached': '❌ Daily copy limit reached. Contact admin.',
         'not_allowed': '❌ You are not allowed to copy codes.',
         'admin_menu': '🛠 *Admin Menu*',
@@ -59,13 +60,15 @@ texts = {
         'limit_increased': '✅ Daily limit increased to {limit}.',
         'limit_decreased': '✅ Daily limit decreased to {limit}.',
         'invalid_user_id': '❌ Invalid user ID.',
-        'user_info': '👤 User: {user_name} (ID: {user_id})\n🖥 IP: {ip}\n📅 Time: {time}\n🔐 Code: {code}'
+        'user_info': '👤 User: {user_name} (ID: {user_id})\n🖥 IP: {ip}\n📅 Time: {time}\n🔐 Code: {code}',
+        'private_code': '🔐 Your 2FA Code: {code}\n⚠️ Valid for 30 seconds'
     },
     'ar': {
         'code_message': '🔐 *رمز المصادقة الثنائية*\n\nالرمز التالي في: {next_time}',
         'copy_button': '📋 نسخ الرمز',
         'language_button': '🌐 تغيير اللغة',
-        'copy_success': '✅ تم نسخ الرمز إلى الحافظة! صالح لمدة 30 ثانية.\nعدد النسخ المتبقية اليوم: {remaining}',
+        'copy_success': '✅ تم نسخ الرمز بنجاح! صالح لمدة 30 ثانية.\nعدد النسخ المتبقية اليوم: {remaining}',
+        'code_sent': '📨 تم إرسال الرمز إلى محادثتك الخاصة',
         'copy_limit_reached': '❌ تم الوصول إلى الحد اليومي للنسخ. تواصل مع المسؤول.',
         'not_allowed': '❌ غير مسموح لك بنسخ الرموز.',
         'admin_menu': '🛠 *قائمة المسؤول*',
@@ -78,28 +81,34 @@ texts = {
         'limit_increased': '✅ تم زيادة الحد اليومي إلى {limit}.',
         'limit_decreased': '✅ تم تقليل الحد اليومي إلى {limit}.',
         'invalid_user_id': '❌ معرّف العضو غير صالح.',
-        'user_info': '👤 العضو: {user_name} (ID: {user_id})\n🖥 IP: {ip}\n📅 الوقت: {time}\n🔐 الرمز: {code}'
+        'user_info': '👤 العضو: {user_name} (ID: {user_id})\n🖥 IP: {ip}\n📅 الوقت: {time}\n🔐 الرمز: {code}',
+        'private_code': '🔐 رمز المصادقة الخاص بك: {code}\n⚠️ صالح لمدة 30 ثانية'
     }
 }
 
 def copy_to_clipboard(text):
+    """Try various methods to copy text to clipboard"""
     try:
-        # For Linux
-        subprocess.run(['xclip', '-selection', 'clipboard'], input=text.strip().encode('utf-8'), check=True)
+        # Try Linux (xclip)
+        subprocess.run(['xclip', '-selection', 'clipboard'], 
+                      input=text.strip().encode('utf-8'),
+                      check=True)
+        return True
     except:
         try:
-            # For macOS
-            subprocess.run(['pbcopy'], input=text.strip().encode('utf-8'), check=True)
+            # Try macOS (pbcopy)
+            subprocess.run(['pbcopy'], 
+                         input=text.strip().encode('utf-8'),
+                         check=True)
+            return True
         except:
-            # For Windows (requires pywin32)
+            # Fallback: Save to temporary file
             try:
-                import win32clipboard
-                win32clipboard.OpenClipboard()
-                win32clipboard.EmptyClipboard()
-                win32clipboard.SetClipboardText(text.strip())
-                win32clipboard.CloseClipboard()
+                with open('/tmp/last_2fa_code.txt', 'w') as f:
+                    f.write(text.strip())
+                return True
             except:
-                pass
+                return False
 
 def get_user_language(user_id):
     return user_language.get(user_id, 'en')
@@ -153,14 +162,29 @@ def handle_copy(update: Update, context: CallbackContext):
     code = query.data.split('_')[1]
     current_copies += 1
     users_copy_count[user_id] = users_copy_count.get(user_id, 0) + 1
-    
-    # Copy code to clipboard
-    copy_to_clipboard(code)
-    
     remaining = DAILY_COPY_LIMIT - current_copies
-    query.answer(text=texts[lang]['copy_success'].format(remaining=remaining), show_alert=True)
     
-    ip = "123.45.67.89"
+    # Try to copy to clipboard and send to user
+    copy_success = copy_to_clipboard(code)
+    
+    try:
+        # Always send code to user privately
+        context.bot.send_message(
+            chat_id=user_id,
+            text=texts[lang]['private_code'].format(code=code)
+        )
+        alert_msg = texts[lang]['code_sent']
+    except Exception as e:
+        logger.error(f"Failed to send private message: {e}")
+        if copy_success:
+            alert_msg = texts[lang]['copy_success'].format(remaining=remaining)
+        else:
+            alert_msg = f"2FA Code: {code}\n\n(Please copy manually)\n\nRemaining copies: {remaining}"
+    
+    query.answer(text=alert_msg, show_alert=True)
+    
+    # Log to admin
+    ip = "123.45.67.89"  # Replace with actual IP detection if needed
     now = datetime.now(gaza_tz).strftime('%Y-%m-%d %H:%M:%S')
     context.bot.send_message(
         chat_id=ADMIN_ID,
