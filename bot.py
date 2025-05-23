@@ -1,4 +1,4 @@
-#!/usr/bin/env python3 v1.5
+#!/usr/bin/env python3 v1.6
 import os
 import logging
 import requests
@@ -58,11 +58,12 @@ texts = {
         'limit_updated': '✅ Daily limit updated to {limit} for user {user_name} (ID: {user_id}).',
         'invalid_input': '❌ Invalid input. Please send a valid number.',
         'user_info': '👤 *User Info*\n\n🔹 Name: {user_name}\n🔹 ID: `{user_id}`\n🔹 IP: `{ip}`\n🔹 Time: `{time}`\n🔹 Code: `{code}`',
-        'current_limit': 'Current limit for {user_name} (ID: {user_id}): {limit}\n\nSelect action:',
+        'current_limit': '🔢 *Set User Limit*\n\nUser: {user_name} (ID: {user_id})\nCurrent limit: {limit}\n\nSelect action:',
         'increase': '➕ Increase',
         'decrease': '➖ Decrease',
         'send_user_id': 'Please send the user ID:',
-        'code_private_msg': '🔐 *2FA Code*\n\nYour verification code: `{code}`\n\n⚠️ Valid for 30 seconds only!'
+        'code_private_msg': '🔐 *2FA Code*\n\nYour verification code: `{code}`\n\n⚠️ Valid for 30 seconds only!',
+        'limit_change_success': '✅ Limit changed successfully! New limit: {limit}'
     },
     'ar': {
         'code_message': '🔐 *رمز المصادقة الثنائية*\n\nالرمز التالي في: {next_time}',
@@ -82,11 +83,12 @@ texts = {
         'limit_updated': '✅ تم تحديث الحد اليومي إلى {limit} للعضو {user_name} (ID: {user_id}).',
         'invalid_input': '❌ إدخال غير صالح. الرجاء إرسال رقم صحيح.',
         'user_info': '👤 *معلومات العضو*\n\n🔹 الاسم: {user_name}\n🔹 الرقم: `{user_id}`\n🔹 الأيبي: `{ip}`\n🔹 الوقت: `{time}`\n🔹 الرمز: `{code}`',
-        'current_limit': 'الحد الحالي لـ {user_name} (ID: {user_id}): {limit}\n\nاختر الإجراء:',
+        'current_limit': '🔢 *تعيين حد المستخدم*\n\nالعضو: {user_name} (ID: {user_id})\nالحد الحالي: {limit}\n\nاختر الإجراء:',
         'increase': '➕ زيادة',
         'decrease': '➖ نقصان',
         'send_user_id': 'الرجاء إرسال معرف المستخدم:',
-        'code_private_msg': '🔐 *رمز المصادقة*\n\nرمز التحقق الخاص بك: `{code}`\n\n⚠️ صالح لمدة 30 ثانية فقط!'
+        'code_private_msg': '🔐 *رمز المصادقة*\n\nرمز التحقق الخاص بك: `{code}`\n\n⚠️ صالح لمدة 30 ثانية فقط!',
+        'limit_change_success': '✅ تم تغيير الحد بنجاح! الحد الجديد: {limit}'
     }
 }
 
@@ -138,7 +140,7 @@ def handle_copy(update: Update, context: CallbackContext):
     lang = get_user_language(user_id)
     code = query.data.split('_')[1]
     
-    # Add user automatically if not exists with default 5 copies
+    # Auto-add user with default 5 copies if not exists
     if user_id not in allowed_users:
         allowed_users[user_id] = {
             'limit': 5,
@@ -158,7 +160,7 @@ def handle_copy(update: Update, context: CallbackContext):
         )
         return
     
-    # Send code to private chat
+    # Send real-time code to private chat
     try:
         context.bot.send_message(
             chat_id=user_id,
@@ -334,7 +336,8 @@ def handle_admin_reply(update: Update, context: CallbackContext):
                         user_id=target_user,
                         limit=user_data['limit']
                     ),
-                    reply_markup=InlineKeyboardMarkup(keyboard)
+                    reply_markup=InlineKeyboardMarkup(keyboard),
+                    parse_mode='Markdown'
                 )
             else:
                 update.message.reply_text(
@@ -365,23 +368,22 @@ def handle_limit_actions(update: Update, context: CallbackContext):
     
     if action == 'inc':
         user_data['limit'] += 1
-        new_limit = user_data['limit']
     elif action == 'dec':
         if user_data['limit'] > 1:
             user_data['limit'] -= 1
-            new_limit = user_data['limit']
         else:
             query.answer(text="Limit cannot be less than 1", show_alert=True)
             return
     
     query.edit_message_text(
-        texts[lang]['limit_updated'].format(
-            limit=new_limit,
+        text=texts[lang]['limit_updated'].format(
+            limit=user_data['limit'],
             user_name=user_data['name'],
             user_id=target_user
-        )
+        ),
+        parse_mode='Markdown'
     )
-    query.answer()
+    query.answer(text=texts[lang]['limit_change_success'].format(limit=user_data['limit']), show_alert=True)
 
 def reset_daily_limits(context: CallbackContext):
     for user_data in allowed_users.values():
