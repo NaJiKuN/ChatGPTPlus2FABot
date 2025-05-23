@@ -24,13 +24,10 @@ TOTP_SECRET = "ZV3YUXYVPOZSUOT43SKVDGFFVWBZXOVI"
 # Global variables
 DAILY_COPY_LIMIT = 5
 current_copies = 0
-allowed_users = set()
+allowed_users = {ADMIN_ID}
 users_copy_count = {}
 user_language = {}
 last_code_sent_time = None
-
-# Initialize allowed_users with ADMIN_ID
-allowed_users.add(ADMIN_ID)
 
 # Set up logging
 logging.basicConfig(
@@ -101,7 +98,7 @@ def send_2fa_code(context: CallbackContext):
     keyboard = [
         [InlineKeyboardButton(texts['en']['copy_button'], callback_data=f'copy_{code}')],
         [InlineKeyboardButton(texts['en']['language_button'], callback_data='change_language')]
-    ]  # ✅ إغلاق القوس هنا
+    ]
 
     context.bot.send_message(
         chat_id=GROUP_ID,
@@ -137,7 +134,6 @@ def handle_copy(update: Update, context: CallbackContext):
     remaining = DAILY_COPY_LIMIT - current_copies
     query.answer(text=texts[lang]['copy_success'].format(remaining=remaining), show_alert=True)
     
-    # Simulate IP address (replace with actual IP detection)
     ip = "123.45.67.89"
     now = datetime.now(gaza_tz).strftime('%Y-%m-%d %H:%M:%S')
     context.bot.send_message(
@@ -168,6 +164,7 @@ def admin_command(update: Update, context: CallbackContext):
         [InlineKeyboardButton(texts[lang]['remove_user'], callback_data='admin_remove_user')],
         [InlineKeyboardButton(texts[lang]['increase_limit'], callback_data='admin_increase_limit')],
         [InlineKeyboardButton(texts[lang]['decrease_limit'], callback_data='admin_decrease_limit')]
+    ]
     
     update.message.reply_text(
         text=texts[lang]['admin_menu'],
@@ -176,8 +173,8 @@ def admin_command(update: Update, context: CallbackContext):
     )
 
 def admin_actions(update: Update, context: CallbackContext):
-    global DAILY_COPY_LIMIT  # ← ضعها في أعلى الدالة
-    global allowed_users     # (بما أنك تستخدمها أيضًا لاحقًا)
+    global DAILY_COPY_LIMIT
+    global allowed_users
 
     query = update.callback_query
     user_id = query.from_user.id
@@ -252,10 +249,6 @@ def main():
     dp.add_error_handler(error_handler)
     
     jq = updater.job_queue
-    jq.run_repeating(send_2fa_code, interval=300, first=0)
-    
-    updater.start_polling()
-    updater.idle()
-
-if __name__ == '__main__':
-    main()
+    jq
+::contentReference[oaicite:5]{index=5}
+ 
