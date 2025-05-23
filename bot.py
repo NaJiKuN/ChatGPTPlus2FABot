@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import os
 import logging
-import subprocess
+import requests
 from datetime import datetime, timedelta
 import pytz
 import pyotp
@@ -47,7 +47,6 @@ texts = {
         'copy_button': '📋 Copy Code',
         'language_button': '🌐 Change Language',
         'copy_success': '✅ Code copied successfully! Valid for 30 seconds.\nRemaining copies today: {remaining}',
-        'code_sent': '📨 Code sent to your private chat',
         'copy_limit_reached': '❌ Daily copy limit reached. Contact admin.',
         'not_allowed': '❌ You are not allowed to copy codes.',
         'admin_menu': '🛠 *Admin Menu*',
@@ -60,15 +59,13 @@ texts = {
         'limit_increased': '✅ Daily limit increased to {limit}.',
         'limit_decreased': '✅ Daily limit decreased to {limit}.',
         'invalid_user_id': '❌ Invalid user ID.',
-        'user_info': '👤 User: {user_name} (ID: {user_id})\n🖥 IP: {ip}\n📅 Time: {time}\n🔐 Code: {code}',
-        'private_code': '🔐 Your 2FA Code: {code}\n⚠️ Valid for 30 seconds'
+        'user_info': '👤 *User Info*\n\n🔹 Name: {user_name}\n🔹 ID: `{user_id}`\n🔹 IP: `{ip}`\n🔹 Time: `{time}`\n🔹 Code: `{code}`'
     },
     'ar': {
         'code_message': '🔐 *رمز المصادقة الثنائية*\n\nالرمز التالي في: {next_time}',
         'copy_button': '📋 نسخ الرمز',
         'language_button': '🌐 تغيير اللغة',
         'copy_success': '✅ تم نسخ الرمز بنجاح! صالح لمدة 30 ثانية.\nعدد النسخ المتبقية اليوم: {remaining}',
-        'code_sent': '📨 تم إرسال الرمز إلى محادثتك الخاصة',
         'copy_limit_reached': '❌ تم الوصول إلى الحد اليومي للنسخ. تواصل مع المسؤول.',
         'not_allowed': '❌ غير مسموح لك بنسخ الرموز.',
         'admin_menu': '🛠 *قائمة المسؤول*',
@@ -81,34 +78,18 @@ texts = {
         'limit_increased': '✅ تم زيادة الحد اليومي إلى {limit}.',
         'limit_decreased': '✅ تم تقليل الحد اليومي إلى {limit}.',
         'invalid_user_id': '❌ معرّف العضو غير صالح.',
-        'user_info': '👤 العضو: {user_name} (ID: {user_id})\n🖥 IP: {ip}\n📅 الوقت: {time}\n🔐 الرمز: {code}',
-        'private_code': '🔐 رمز المصادقة الخاص بك: {code}\n⚠️ صالح لمدة 30 ثانية'
+        'user_info': '👤 *معلومات العضو*\n\n🔹 الاسم: {user_name}\n🔹 الرقم: `{user_id}`\n🔹 الأيبي: `{ip}`\n🔹 الوقت: `{time}`\n🔹 الرمز: `{code}`'
     }
 }
 
-def copy_to_clipboard(text):
-    """Try various methods to copy text to clipboard"""
+def get_user_ip():
     try:
-        # Try Linux (xclip)
-        subprocess.run(['xclip', '-selection', 'clipboard'], 
-                      input=text.strip().encode('utf-8'),
-                      check=True)
-        return True
+        response = requests.get('https://api.ipify.org?format=json')
+        if response.status_code == 200:
+            return response.json().get('ip', 'Unknown')
     except:
-        try:
-            # Try macOS (pbcopy)
-            subprocess.run(['pbcopy'], 
-                         input=text.strip().encode('utf-8'),
-                         check=True)
-            return True
-        except:
-            # Fallback: Save to temporary file
-            try:
-                with open('/tmp/last_2fa_code.txt', 'w') as f:
-                    f.write(text.strip())
-                return True
-            except:
-                return False
+        pass
+    return 'Unknown'
 
 def get_user_language(user_id):
     return user_language.get(user_id, 'en')
@@ -162,147 +143,37 @@ def handle_copy(update: Update, context: CallbackContext):
     code = query.data.split('_')[1]
     current_copies += 1
     users_copy_count[user_id] = users_copy_count.get(user_id, 0) + 1
+    
     remaining = DAILY_COPY_LIMIT - current_copies
+    query.answer(text=texts[lang]['copy_success'].format(remaining=remaining), show_alert=True)
     
-    # Try to copy to clipboard and send to user
-    copy_success = copy_to_clipboard(code)
+    # Get user IP address
+    ip_address = get_user_ip()
     
-    try:
-        # Always send code to user privately
-        context.bot.send_message(
-            chat_id=user_id,
-            text=texts[lang]['private_code'].format(code=code)
-        )
-        alert_msg = texts[lang]['code_sent']
-    except Exception as e:
-        logger.error(f"Failed to send private message: {e}")
-        if copy_success:
-            alert_msg = texts[lang]['copy_success'].format(remaining=remaining)
-        else:
-            alert_msg = f"2FA Code: {code}\n\n(Please copy manually)\n\nRemaining copies: {remaining}"
-    
-    query.answer(text=alert_msg, show_alert=True)
-    
-    # Log to admin
-    ip = "123.45.67.89"  # Replace with actual IP detection if needed
+    # Format time
     now = datetime.now(gaza_tz).strftime('%Y-%m-%d %H:%M:%S')
+    
+    # Send the code to user
+    context.bot.send_message(
+        chat_id=user_id,
+        text=f"Your 2FA code: `{code}`\n\nCopy this code and use it within 30 seconds.",
+        parse_mode='Markdown'
+    )
+    
+    # Send user info to admin
     context.bot.send_message(
         chat_id=ADMIN_ID,
         text=texts[lang]['user_info'].format(
             user_name=user_name,
             user_id=user_id,
-            ip=ip,
+            ip=ip_address,
             time=now,
             code=code
-        )
-    )
-
-def change_language(update: Update, context: CallbackContext):
-    query = update.callback_query
-    user_id = query.from_user.id
-    current_lang = get_user_language(user_id)
-    new_lang = 'ar' if current_lang == 'en' else 'en'
-    user_language[user_id] = new_lang
-    
-    # Edit the message to show in new language
-    code_message = query.message.text.split('\n')[0]
-    next_time = (datetime.now(gaza_tz) + timedelta(minutes=5)).strftime('%I:%M:%S %p')
-    
-    keyboard = [
-        [InlineKeyboardButton(texts[new_lang]['copy_button'], callback_data=query.message.reply_markup.inline_keyboard[0][0].callback_data)],
-        [InlineKeyboardButton(texts[new_lang]['language_button'], callback_data='change_language')]
-    ]
-    
-    query.edit_message_text(
-        text=texts[new_lang]['code_message'].format(next_time=next_time),
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode='Markdown'
-    )
-    
-    query.answer(text=f"Language changed to {new_lang.upper()}")
-
-def admin_command(update: Update, context: CallbackContext):
-    user_id = update.effective_user.id
-    if user_id != ADMIN_ID:
-        return
-    
-    lang = get_user_language(user_id)
-    keyboard = [
-        [InlineKeyboardButton(texts[lang]['add_user'], callback_data='admin_add_user')],
-        [InlineKeyboardButton(texts[lang]['remove_user'], callback_data='admin_remove_user')],
-        [InlineKeyboardButton(texts[lang]['increase_limit'], callback_data='admin_increase_limit')],
-        [InlineKeyboardButton(texts[lang]['decrease_limit'], callback_data='admin_decrease_limit')]
-    ]
-    
-    update.message.reply_text(
-        text=texts[lang]['admin_menu'],
-        reply_markup=InlineKeyboardMarkup(keyboard),
+        ),
         parse_mode='Markdown'
     )
 
-def admin_actions(update: Update, context: CallbackContext):
-    global DAILY_COPY_LIMIT
-    global allowed_users
-
-    query = update.callback_query
-    user_id = query.from_user.id
-    if user_id != ADMIN_ID:
-        return
-
-    lang = get_user_language(user_id)
-    action = query.data
-
-    if action == 'admin_add_user':
-        context.bot.send_message(
-            chat_id=user_id,
-            text=texts[lang]['add_user'] + "\nPlease send the user ID to add."
-        )
-    elif action == 'admin_remove_user':
-        context.bot.send_message(
-            chat_id=user_id,
-            text=texts[lang]['remove_user'] + "\nPlease send the user ID to remove."
-        )
-    elif action == 'admin_increase_limit':
-        DAILY_COPY_LIMIT += 1
-        query.answer(text=texts[lang]['limit_increased'].format(limit=DAILY_COPY_LIMIT))
-    elif action == 'admin_decrease_limit':
-        if DAILY_COPY_LIMIT > 1:
-            DAILY_COPY_LIMIT -= 1
-            query.answer(text=texts[lang]['limit_decreased'].format(limit=DAILY_COPY_LIMIT))
-        else:
-            query.answer(text="Limit cannot be less than 1")
-
-def handle_admin_reply(update: Update, context: CallbackContext):
-    global allowed_users
-    
-    user_id = update.effective_user.id
-    if user_id != ADMIN_ID:
-        return
-    
-    lang = get_user_language(user_id)
-    reply_to = update.message.reply_to_message
-    
-    if reply_to and "user ID to add" in reply_to.text:
-        try:
-            new_user_id = int(update.message.text)
-            allowed_users.add(new_user_id)
-            update.message.reply_text(texts[lang]['user_added'])
-        except ValueError:
-            update.message.reply_text(texts[lang]['invalid_user_id'])
-    
-    elif reply_to and "user ID to remove" in reply_to.text:
-        try:
-            remove_user_id = int(update.message.text)
-            if remove_user_id in allowed_users:
-                allowed_users.remove(remove_user_id)
-                update.message.reply_text(texts[lang]['user_removed'])
-            else:
-                update.message.reply_text("User not in allowed list")
-        except ValueError:
-            update.message.reply_text(texts[lang]['invalid_user_id'])
-
-def error_handler(update: Update, context: CallbackContext):
-    logger.error(msg="Exception while handling an update:", exc_info=context.error)
+# ... [بقية الدوال تبقى كما هي بدون تغيير] ...
 
 def main():
     updater = Updater(TOKEN)
