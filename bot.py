@@ -107,7 +107,6 @@ def send_2fa_code(context: CallbackContext):
         parse_mode='Markdown'
     )
 
-
 def start(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
     update.message.reply_text(f"Hello! I'm the 2FA bot. Your ID: {user_id}")
@@ -249,6 +248,10 @@ def main():
     dp.add_error_handler(error_handler)
     
     jq = updater.job_queue
-    jq
-::contentReference[oaicite:5]{index=5}
- 
+    jq.run_repeating(send_2fa_code, interval=300, first=0)  # Send code every 5 minutes
+    
+    updater.start_polling()
+    updater.idle()
+
+if __name__ == '__main__':
+    main()
