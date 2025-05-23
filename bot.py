@@ -176,16 +176,17 @@ def admin_command(update: Update, context: CallbackContext):
     )
 
 def admin_actions(update: Update, context: CallbackContext):
-    global DAILY_COPY_LIMIT, allowed_users
-    
+    global DAILY_COPY_LIMIT  # ← ضعها في أعلى الدالة
+    global allowed_users     # (بما أنك تستخدمها أيضًا لاحقًا)
+
     query = update.callback_query
     user_id = query.from_user.id
     if user_id != ADMIN_ID:
         return
-    
+
     lang = get_user_language(user_id)
     action = query.data
-    
+
     if action == 'admin_add_user':
         context.bot.send_message(
             chat_id=user_id,
