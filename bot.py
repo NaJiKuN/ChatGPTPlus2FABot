@@ -26,8 +26,11 @@ DAILY_COPY_LIMIT = 5
 current_copies = 0
 allowed_users = set()
 users_copy_count = {}
-user_language = {}  # 'en' or 'ar'
+user_language = {}
 last_code_sent_time = None
+
+# Initialize allowed_users with ADMIN_ID
+allowed_users.add(ADMIN_ID)
 
 # Set up logging
 logging.basicConfig(
@@ -58,8 +61,7 @@ texts = {
         'limit_increased': '✅ Daily limit increased to {limit}.',
         'limit_decreased': '✅ Daily limit decreased to {limit}.',
         'invalid_user_id': '❌ Invalid user ID.',
-        'user_info': '👤 User: {user_id}\n🖥 IP: {ip}\n📅 Time: {time}',
-        'next_code_time': 'Next code at: {next_time}'
+        'user_info': '👤 User: {user_id}\n🖥 IP: {ip}\n📅 Time: {time}'
     },
     'ar': {
         'code_message': '🔐 *رمز المصادقة الثنائية*\n\nالرمز التالي في: {next_time}',
@@ -78,8 +80,7 @@ texts = {
         'limit_increased': '✅ تم زيادة الحد اليومي إلى {limit}.',
         'limit_decreased': '✅ تم تقليل الحد اليومي إلى {limit}.',
         'invalid_user_id': '❌ معرّف العضو غير صالح.',
-        'user_info': '👤 العضو: {user_id}\n🖥 IP: {ip}\n📅 الوقت: {time}',
-        'next_code_time': 'الرمز التالي في: {next_time}'
+        'user_info': '👤 العضو: {user_id}\n🖥 IP: {ip}\n📅 الوقت: {time}'
     }
 }
 
@@ -113,13 +114,13 @@ def start(update: Update, context: CallbackContext):
     update.message.reply_text(f"Hello! I'm the 2FA bot. Your ID: {user_id}")
 
 def handle_copy(update: Update, context: CallbackContext):
-    global DAILY_COPY_LIMIT, current_copies, allowed_users, users_copy_count
+    global current_copies, users_copy_count
     
     query = update.callback_query
     user_id = query.from_user.id
     lang = get_user_language(user_id)
     
-    if user_id not in allowed_users and user_id != ADMIN_ID:
+    if user_id not in allowed_users:
         query.answer(text=texts[lang]['not_allowed'], show_alert=True)
         return
     
@@ -128,14 +129,14 @@ def handle_copy(update: Update, context: CallbackContext):
         return
     
     code = query.data.split('_')[1]
-    
     current_copies += 1
     users_copy_count[user_id] = users_copy_count.get(user_id, 0) + 1
     
     remaining = DAILY_COPY_LIMIT - current_copies
     query.answer(text=texts[lang]['copy_success'].format(remaining=remaining), show_alert=True)
     
-    ip = "123.45.67.89"  # Replace with actual IP detection
+    # Simulate IP address (replace with actual IP detection)
+    ip = "123.45.67.89"
     now = datetime.now(gaza_tz).strftime('%Y-%m-%d %H:%M:%S')
     context.bot.send_message(
         chat_id=ADMIN_ID,
@@ -149,11 +150,9 @@ def handle_copy(update: Update, context: CallbackContext):
 def change_language(update: Update, context: CallbackContext):
     query = update.callback_query
     user_id = query.from_user.id
-    
     current_lang = get_user_language(user_id)
     new_lang = 'ar' if current_lang == 'en' else 'en'
     user_language[user_id] = new_lang
-    
     query.answer(text=f"Language changed to {new_lang.upper()}")
 
 def admin_command(update: Update, context: CallbackContext):
@@ -162,7 +161,6 @@ def admin_command(update: Update, context: CallbackContext):
         return
     
     lang = get_user_language(user_id)
-    
     keyboard = [
         [InlineKeyboardButton(texts[lang]['add_user'], callback_data='admin_add_user')],
         [InlineKeyboardButton(texts[lang]['remove_user'], callback_data='admin_remove_user')],
@@ -176,7 +174,7 @@ def admin_command(update: Update, context: CallbackContext):
     )
 
 def admin_actions(update: Update, context: CallbackContext):
-    global DAILY_COPY_LIMIT
+    global DAILY_COPY_LIMIT, allowed_users
     
     query = update.callback_query
     user_id = query.from_user.id
@@ -204,64 +202,4 @@ def admin_actions(update: Update, context: CallbackContext):
             DAILY_COPY_LIMIT -= 1
             query.answer(text=texts[lang]['limit_decreased'].format(limit=DAILY_COPY_LIMIT))
         else:
-            query.answer(text="Limit cannot be less than 1")
-
-def handle_admin_reply(update: Update, context: CallbackContext):
-    global allowed_users
-    
-    user_id = update.effective_user.id
-    if user_id != ADMIN_ID:
-        return
-    
-    lang = get_user_language(user_id)
-    reply_to = update.message.reply_to_message
-    
-    if reply_to and "user ID to add" in reply_to.text:
-        try:
-            new_user_id = int(update.message.text)
-            allowed_users.add(new_user_id)
-            update.message.reply_text(texts[lang]['user_added'])
-        except ValueError:
-            update.message.reply_text(texts[lang]['invalid_user_id'])
-    
-    elif reply_to and "user ID to remove" in reply_to.text:
-        try:
-            remove_user_id = int(update.message.text)
-            if remove_user_id in allowed_users:
-                allowed_users.remove(remove_user_id)
-                update.message.reply_text(texts[lang]['user_removed'])
-            else:
-                update.message.reply_text("User not in allowed list")
-        except ValueError:
-            update.message.reply_text(texts[lang]['invalid_user_id'])
-
-def error_handler(update: Update, context: CallbackContext):
-    logger.error(msg="Exception while handling an update:", exc_info=context.error)
-
-def main():
-    # Initialize the bot
-    updater = Updater(TOKEN)
-    dp = updater.dispatcher
-    
-    # Add admin to allowed users by default
-    allowed_users.add(ADMIN_ID)
-    
-    # Add handlers
-    dp.add_handler(CommandHandler("start", start))
-    dp.add_handler(CommandHandler("admin", admin_command))
-    dp.add_handler(CallbackQueryHandler(handle_copy, pattern='^copy_'))
-    dp.add_handler(CallbackQueryHandler(change_language, pattern='^change_language$'))
-    dp.add_handler(CallbackQueryHandler(admin_actions, pattern='^admin_'))
-    dp.add_handler(MessageHandler(Filters.text & Filters.reply, handle_admin_reply))
-    dp.add_error_handler(error_handler)
-    
-    # Schedule 2FA code sending
-    jq = updater.job_queue
-    jq.run_repeating(send_2fa_code, interval=300, first=0)
-    
-    # Start the bot
-    updater.start_polling()
-    updater.idle()
-
-if __name__ == '__main__':
-    main()
+            query.
