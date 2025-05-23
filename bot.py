@@ -101,13 +101,15 @@ def send_2fa_code(context: CallbackContext):
     keyboard = [
         [InlineKeyboardButton(texts['en']['copy_button'], callback_data=f'copy_{code}')],
         [InlineKeyboardButton(texts['en']['language_button'], callback_data='change_language')]
-    
+    ]  # ✅ إغلاق القوس هنا
+
     context.bot.send_message(
         chat_id=GROUP_ID,
         text=texts['en']['code_message'].format(next_time=next_time),
         reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode='Markdown'
     )
+
 
 def start(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
