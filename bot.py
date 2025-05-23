@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import os
 import logging
+import subprocess
 from datetime import datetime, timedelta
 import pytz
 import pyotp
@@ -45,7 +46,7 @@ texts = {
         'code_message': '🔐 *2FA Verification Code*\n\nNext code at: {next_time}',
         'copy_button': '📋 Copy Code',
         'language_button': '🌐 Change Language',
-        'copy_success': '✅ Code copied successfully! Valid for 30 seconds.\nRemaining copies today: {remaining}',
+        'copy_success': '✅ Code copied to clipboard! Valid for 30 seconds.\nRemaining copies today: {remaining}',
         'copy_limit_reached': '❌ Daily copy limit reached. Contact admin.',
         'not_allowed': '❌ You are not allowed to copy codes.',
         'admin_menu': '🛠 *Admin Menu*',
@@ -58,13 +59,13 @@ texts = {
         'limit_increased': '✅ Daily limit increased to {limit}.',
         'limit_decreased': '✅ Daily limit decreased to {limit}.',
         'invalid_user_id': '❌ Invalid user ID.',
-        'user_info': '👤 User: {user_name} (ID: {user_id})\n🖥 IP: {ip}\n📅 Time: {time}'
+        'user_info': '👤 User: {user_name} (ID: {user_id})\n🖥 IP: {ip}\n📅 Time: {time}\n🔐 Code: {code}'
     },
     'ar': {
         'code_message': '🔐 *رمز المصادقة الثنائية*\n\nالرمز التالي في: {next_time}',
         'copy_button': '📋 نسخ الرمز',
         'language_button': '🌐 تغيير اللغة',
-        'copy_success': '✅ تم نسخ الرمز بنجاح! صالح لمدة 30 ثانية.\nعدد النسخ المتبقية اليوم: {remaining}',
+        'copy_success': '✅ تم نسخ الرمز إلى الحافظة! صالح لمدة 30 ثانية.\nعدد النسخ المتبقية اليوم: {remaining}',
         'copy_limit_reached': '❌ تم الوصول إلى الحد اليومي للنسخ. تواصل مع المسؤول.',
         'not_allowed': '❌ غير مسموح لك بنسخ الرموز.',
         'admin_menu': '🛠 *قائمة المسؤول*',
@@ -77,9 +78,28 @@ texts = {
         'limit_increased': '✅ تم زيادة الحد اليومي إلى {limit}.',
         'limit_decreased': '✅ تم تقليل الحد اليومي إلى {limit}.',
         'invalid_user_id': '❌ معرّف العضو غير صالح.',
-        'user_info': '👤 العضو: {user_name} (ID: {user_id})\n🖥 IP: {ip}\n📅 الوقت: {time}'
+        'user_info': '👤 العضو: {user_name} (ID: {user_id})\n🖥 IP: {ip}\n📅 الوقت: {time}\n🔐 الرمز: {code}'
     }
 }
+
+def copy_to_clipboard(text):
+    try:
+        # For Linux
+        subprocess.run(['xclip', '-selection', 'clipboard'], input=text.strip().encode('utf-8'), check=True)
+    except:
+        try:
+            # For macOS
+            subprocess.run(['pbcopy'], input=text.strip().encode('utf-8'), check=True)
+        except:
+            # For Windows (requires pywin32)
+            try:
+                import win32clipboard
+                win32clipboard.OpenClipboard()
+                win32clipboard.EmptyClipboard()
+                win32clipboard.SetClipboardText(text.strip())
+                win32clipboard.CloseClipboard()
+            except:
+                pass
 
 def get_user_language(user_id):
     return user_language.get(user_id, 'en')
@@ -134,11 +154,11 @@ def handle_copy(update: Update, context: CallbackContext):
     current_copies += 1
     users_copy_count[user_id] = users_copy_count.get(user_id, 0) + 1
     
+    # Copy code to clipboard
+    copy_to_clipboard(code)
+    
     remaining = DAILY_COPY_LIMIT - current_copies
     query.answer(text=texts[lang]['copy_success'].format(remaining=remaining), show_alert=True)
-    
-    # Copy the code to clipboard (simulated by sending it to user)
-    context.bot.send_message(chat_id=user_id, text=f"Your 2FA code: {code}")
     
     ip = "123.45.67.89"
     now = datetime.now(gaza_tz).strftime('%Y-%m-%d %H:%M:%S')
@@ -148,7 +168,8 @@ def handle_copy(update: Update, context: CallbackContext):
             user_name=user_name,
             user_id=user_id,
             ip=ip,
-            time=now
+            time=now,
+            code=code
         )
     )
 
