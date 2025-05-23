@@ -58,7 +58,7 @@ texts = {
         'limit_increased': '✅ Daily limit increased to {limit}.',
         'limit_decreased': '✅ Daily limit decreased to {limit}.',
         'invalid_user_id': '❌ Invalid user ID.',
-        'user_info': '👤 User: {user_id}\n🖥 IP: {ip}\n📅 Time: {time}'
+        'user_info': '👤 User: {user_name} (ID: {user_id})\n🖥 IP: {ip}\n📅 Time: {time}'
     },
     'ar': {
         'code_message': '🔐 *رمز المصادقة الثنائية*\n\nالرمز التالي في: {next_time}',
@@ -77,7 +77,7 @@ texts = {
         'limit_increased': '✅ تم زيادة الحد اليومي إلى {limit}.',
         'limit_decreased': '✅ تم تقليل الحد اليومي إلى {limit}.',
         'invalid_user_id': '❌ معرّف العضو غير صالح.',
-        'user_info': '👤 العضو: {user_id}\n🖥 IP: {ip}\n📅 الوقت: {time}'
+        'user_info': '👤 العضو: {user_name} (ID: {user_id})\n🖥 IP: {ip}\n📅 الوقت: {time}'
     }
 }
 
@@ -95,14 +95,17 @@ def send_2fa_code(context: CallbackContext):
     next_time = (datetime.now(gaza_tz) + timedelta(minutes=5)).strftime('%I:%M:%S %p')
     last_code_sent_time = datetime.now(gaza_tz)
     
+    # Get language for the group
+    lang = 'en'  # Default language for group messages
+    
     keyboard = [
-        [InlineKeyboardButton(texts['en']['copy_button'], callback_data=f'copy_{code}')],
-        [InlineKeyboardButton(texts['en']['language_button'], callback_data='change_language')]
+        [InlineKeyboardButton(texts[lang]['copy_button'], callback_data=f'copy_{code}')],
+        [InlineKeyboardButton(texts[lang]['language_button'], callback_data='change_language')]
     ]
 
     context.bot.send_message(
         chat_id=GROUP_ID,
-        text=texts['en']['code_message'].format(next_time=next_time),
+        text=texts[lang]['code_message'].format(next_time=next_time),
         reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode='Markdown'
     )
@@ -116,6 +119,7 @@ def handle_copy(update: Update, context: CallbackContext):
     
     query = update.callback_query
     user_id = query.from_user.id
+    user_name = query.from_user.full_name
     lang = get_user_language(user_id)
     
     if user_id not in allowed_users:
@@ -133,11 +137,15 @@ def handle_copy(update: Update, context: CallbackContext):
     remaining = DAILY_COPY_LIMIT - current_copies
     query.answer(text=texts[lang]['copy_success'].format(remaining=remaining), show_alert=True)
     
+    # Copy the code to clipboard (simulated by sending it to user)
+    context.bot.send_message(chat_id=user_id, text=f"Your 2FA code: {code}")
+    
     ip = "123.45.67.89"
     now = datetime.now(gaza_tz).strftime('%Y-%m-%d %H:%M:%S')
     context.bot.send_message(
         chat_id=ADMIN_ID,
         text=texts[lang]['user_info'].format(
+            user_name=user_name,
             user_id=user_id,
             ip=ip,
             time=now
@@ -150,6 +158,22 @@ def change_language(update: Update, context: CallbackContext):
     current_lang = get_user_language(user_id)
     new_lang = 'ar' if current_lang == 'en' else 'en'
     user_language[user_id] = new_lang
+    
+    # Edit the message to show in new language
+    code_message = query.message.text.split('\n')[0]
+    next_time = (datetime.now(gaza_tz) + timedelta(minutes=5)).strftime('%I:%M:%S %p')
+    
+    keyboard = [
+        [InlineKeyboardButton(texts[new_lang]['copy_button'], callback_data=query.message.reply_markup.inline_keyboard[0][0].callback_data)],
+        [InlineKeyboardButton(texts[new_lang]['language_button'], callback_data='change_language')]
+    ]
+    
+    query.edit_message_text(
+        text=texts[new_lang]['code_message'].format(next_time=next_time),
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode='Markdown'
+    )
+    
     query.answer(text=f"Language changed to {new_lang.upper()}")
 
 def admin_command(update: Update, context: CallbackContext):
