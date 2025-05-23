@@ -1,4 +1,4 @@
-#!/usr/bin/env python3 v1.9
+#!/usr/bin/env python3 v2.0
 import os
 import logging
 import requests
@@ -23,11 +23,10 @@ BOT_ID = 792534650
 TOTP_SECRET = "ZV3YUXYVPOZSUOT43SKVDGFFVWBZXOVI"
 
 # Global variables
-allowed_users = {ADMIN_ID: {'limit': 5, 'used': 0, 'name': 'Admin', 'base_limit': 5}}
+allowed_users = {ADMIN_ID: {'limit': 5, 'used': 0, 'name': 'Admin'}}
 user_language = {}
 last_code_sent_time = None
 pending_actions = {}
-current_codes = {}  # Stores current active codes
 
 # Set up logging
 logging.basicConfig(
@@ -42,8 +41,8 @@ gaza_tz = pytz.timezone('Asia/Gaza')
 # Language texts
 texts = {
     'en': {
-        'code_message': '🔐 *2FA Verification Code*\n\nNext code at: {next_time}\n\n📋 Copy the code below:',
-        'copy_button': '📋 Copy Code (Remaining: {remaining}/{limit})',
+        'code_message': '🔐 *2FA Verification Code*\n\nNext code at: {next_time}',
+        'copy_button': '📋 Copy Code',
         'language_button': '🌐 Change Language',
         'copy_success': '✅ Code sent to your private chat! Valid for 30 seconds.',
         'copy_limit_reached': '❌ Daily copy limit reached ({used}/{limit}). Try again tomorrow.',
@@ -59,18 +58,16 @@ texts = {
         'limit_updated': '✅ Daily limit updated to {limit} for user {user_name} (ID: {user_id}).',
         'invalid_input': '❌ Invalid input. Please send a valid number.',
         'user_info': '👤 *User Info*\n\n🔹 Name: {user_name}\n🔹 ID: `{user_id}`\n🔹 IP: `{ip}`\n🔹 Time: `{time}`\n🔹 Code: `{code}`',
-        'current_limit': '🔢 *Set User Limit*\n\nUser: {user_name} (ID: {user_id})\nCurrent limit: {limit}\nBase limit: {base_limit}\n\nSelect action:',
+        'current_limit': '🔢 *Set User Limit*\n\nUser: {user_name} (ID: {user_id})\nCurrent limit: {limit}\n\nSelect action:',
         'increase': '➕ Increase',
         'decrease': '➖ Decrease',
         'send_user_id': 'Please send the user ID:',
-        'code_private_msg': '🔐 *2FA Code*\n\nYour verification code: `{code}`\n\n⚠️ Valid for 30 seconds only!\n\nRemaining copies today: {remaining}/{limit}',
-        'limit_change_success': '✅ Limit changed successfully! New limit: {limit}',
-        'base_limit_updated': '✅ Base limit updated to {limit} for user {user_name} (ID: {user_id}).',
-        'current_code': 'Current code: `{code}`'
+        'code_private_msg': '🔐 *2FA Code*\n\nYour verification code: `{code}`\n\n⚠️ Valid for 30 seconds only!',
+        'limit_change_success': '✅ Limit changed successfully! New limit: {limit}'
     },
     'ar': {
-        'code_message': '🔐 *رمز المصادقة الثنائية*\n\nالرمز التالي في: {next_time}\n\n📋 انسخ الرمز أدناه:',
-        'copy_button': '📋 نسخ الرمز (المتبقي: {remaining}/{limit})',
+        'code_message': '🔐 *رمز المصادقة الثنائية*\n\nالرمز التالي في: {next_time}',
+        'copy_button': '📋 نسخ الرمز',
         'language_button': '🌐 تغيير اللغة',
         'copy_success': '✅ تم إرسال الرمز إلى محادثتك الخاصة! صالح لمدة 30 ثانية.',
         'copy_limit_reached': '❌ تم الوصول إلى الحد اليومي للنسخ ({used}/{limit}). حاول مرة أخرى غداً.',
@@ -86,14 +83,12 @@ texts = {
         'limit_updated': '✅ تم تحديث الحد اليومي إلى {limit} للعضو {user_name} (ID: {user_id}).',
         'invalid_input': '❌ إدخال غير صالح. الرجاء إرسال رقم صحيح.',
         'user_info': '👤 *معلومات العضو*\n\n🔹 الاسم: {user_name}\n🔹 الرقم: `{user_id}`\n🔹 الأيبي: `{ip}`\n🔹 الوقت: `{time}`\n🔹 الرمز: `{code}`',
-        'current_limit': '🔢 *تعيين حد المستخدم*\n\nالعضو: {user_name} (ID: {user_id})\nالحد الحالي: {limit}\nالحد الأساسي: {base_limit}\n\nاختر الإجراء:',
+        'current_limit': '🔢 *تعيين حد المستخدم*\n\nالعضو: {user_name} (ID: {user_id})\nالحد الحالي: {limit}\n\nاختر الإجراء:',
         'increase': '➕ زيادة',
         'decrease': '➖ نقصان',
         'send_user_id': 'الرجاء إرسال معرف المستخدم:',
-        'code_private_msg': '🔐 *رمز المصادقة*\n\nرمز التحقق الخاص بك: `{code}`\n\n⚠️ صالح لمدة 30 ثانية فقط!\n\nالنسخ المتبقية اليوم: {remaining}/{limit}',
-        'limit_change_success': '✅ تم تغيير الحد بنجاح! الحد الجديد: {limit}',
-        'base_limit_updated': '✅ تم تحديث الحد الأساسي إلى {limit} للعضو {user_name} (ID: {user_id}).',
-        'current_code': 'الرمز الحالي: `{code}`'
+        'code_private_msg': '🔐 *رمز المصادقة*\n\nرمز التحقق الخاص بك: `{code}`\n\n⚠️ صالح لمدة 30 ثانية فقط!',
+        'limit_change_success': '✅ تم تغيير الحد بنجاح! الحد الجديد: {limit}'
     }
 }
 
@@ -117,32 +112,19 @@ def send_2fa_code(context: CallbackContext):
     global last_code_sent_time
     
     code = generate_2fa_code()
-    next_time = (datetime.now(gaza_tz) + timedelta(seconds=30)).strftime('%I:%M:%S %p')
+    next_time = (datetime.now(gaza_tz) + timedelta(minutes=5)).strftime('%I:%M:%S %p')
     last_code_sent_time = datetime.now(gaza_tz)
-    
-    # Store current code
-    current_codes['code'] = code
-    current_codes['expiry'] = datetime.now(gaza_tz) + timedelta(seconds=30)
     
     lang = 'en'
     
-    # Prepare keyboard with remaining copies info
-    keyboard = []
-    for user_id in allowed_users:
-        user_data = allowed_users[user_id]
-        remaining = user_data['limit'] - user_data['used']
-        keyboard.append([
-            InlineKeyboardButton(
-                texts[lang]['copy_button'].format(remaining=remaining, limit=user_data['limit']),
-                callback_data=f'copy_{user_id}'
-            )
-        ])
-    keyboard.append([InlineKeyboardButton(texts[lang]['language_button'], callback_data='change_language')])
+    keyboard = [
+        [InlineKeyboardButton(texts[lang]['copy_button'], callback_data='generate_new_code')],
+        [InlineKeyboardButton(texts[lang]['language_button'], callback_data='change_language')]
+    ]
 
-    # Send message with current code and buttons
     context.bot.send_message(
         chat_id=GROUP_ID,
-        text=texts[lang]['code_message'].format(next_time=next_time) + f"\n\n`{code}`",
+        text=texts[lang]['code_message'].format(next_time=next_time),
         reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode='Markdown'
     )
@@ -154,24 +136,18 @@ def start(update: Update, context: CallbackContext):
 def handle_copy(update: Update, context: CallbackContext):
     query = update.callback_query
     user_id = query.from_user.id
-    target_user_id = int(query.data.split('_')[1])
     user_name = query.from_user.full_name
     lang = get_user_language(user_id)
     
-    # Check if code is still valid
-    if 'expiry' not in current_codes or datetime.now(gaza_tz) > current_codes['expiry']:
-        query.answer(text="❌ Code expired! Wait for the next code.", show_alert=True)
-        return
-    
-    code = current_codes['code']
+    # Generate new code in real-time
+    code = generate_2fa_code()
     
     # Auto-add user with default 5 copies if not exists
     if user_id not in allowed_users:
         allowed_users[user_id] = {
             'limit': 5,
             'used': 0,
-            'name': user_name,
-            'base_limit': 5
+            'name': user_name
         }
     
     user_data = allowed_users[user_id]
@@ -188,33 +164,12 @@ def handle_copy(update: Update, context: CallbackContext):
     
     # Send real-time code to private chat
     try:
-        remaining = user_data['limit'] - user_data['used'] - 1
         context.bot.send_message(
             chat_id=user_id,
-            text=texts[lang]['code_private_msg'].format(
-                code=code,
-                remaining=remaining,
-                limit=user_data['limit']
-            ),
+            text=texts[lang]['code_private_msg'].format(code=code),
             parse_mode='Markdown'
         )
         user_data['used'] += 1
-        
-        # Update button text with new remaining count
-        remaining = user_data['limit'] - user_data['used']
-        keyboard = query.message.reply_markup.inline_keyboard
-        for row in keyboard:
-            for button in row:
-                if button.callback_data == query.data:
-                    button.text = texts[lang]['copy_button'].format(
-                        remaining=remaining,
-                        limit=user_data['limit']
-                    )
-        
-        query.edit_message_reply_markup(
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
-        
         query.answer(text=texts[lang]['copy_success'], show_alert=True)
     except Exception as e:
         query.answer(text="❌ Failed to send code. Please start a chat with the bot first.", show_alert=True)
@@ -244,33 +199,15 @@ def change_language(update: Update, context: CallbackContext):
     user_language[user_id] = new_lang
     
     code_message = query.message.text.split('\n')[0]
-    next_time = (datetime.now(gaza_tz) + timedelta(seconds=30)).strftime('%I:%M:%S %p')
+    next_time = (datetime.now(gaza_tz) + timedelta(minutes=5)).strftime('%I:%M:%S %p')
     
-    keyboard = []
-    for row in query.message.reply_markup.inline_keyboard:
-        new_row = []
-        for button in row:
-            if button.callback_data == 'change_language':
-                new_row.append(InlineKeyboardButton(
-                    texts[new_lang]['language_button'],
-                    callback_data='change_language'
-                ))
-            else:
-                # Update copy button with new language but keep the remaining count
-                parts = button.text.split('(')
-                if len(parts) > 1:
-                    remaining_info = parts[1].replace(')', '')
-                    new_text = texts[new_lang]['copy_button'].split('(')[0] + f'({remaining_info})'
-                    new_row.append(InlineKeyboardButton(
-                        new_text,
-                        callback_data=button.callback_data
-                    ))
-                else:
-                    new_row.append(button)
-        keyboard.append(new_row)
+    keyboard = [
+        [InlineKeyboardButton(texts[new_lang]['copy_button'], callback_data='generate_new_code')],
+        [InlineKeyboardButton(texts[new_lang]['language_button'], callback_data='change_language')]
+    ]
     
     query.edit_message_text(
-        text=texts[new_lang]['code_message'].format(next_time=next_time) + f"\n\n`{current_codes.get('code', '')}`",
+        text=texts[new_lang]['code_message'].format(next_time=next_time),
         reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode='Markdown'
     )
@@ -335,7 +272,7 @@ def list_users(update: Update, context: CallbackContext):
     users_list = []
     
     for uid, user_data in allowed_users.items():
-        users_list.append(f"🔹 {user_data['name']} (ID: {uid}) - {user_data['used']}/{user_data['limit']} copies today (Base limit: {user_data['base_limit']})")
+        users_list.append(f"🔹 {user_data['name']} (ID: {uid}) - {user_data['used']}/{user_data['limit']} copies today")
     
     if not users_list:
         users_list.append("No users available")
@@ -366,8 +303,7 @@ def handle_admin_message(update: Update, context: CallbackContext):
                 allowed_users[target_user] = {
                     'limit': 5,
                     'used': 0,
-                    'name': f"User {target_user}",
-                    'base_limit': 5
+                    'name': f"User {target_user}"
                 }
                 update.message.reply_text(
                     texts[lang]['user_added'].format(user_id=target_user)
@@ -393,9 +329,6 @@ def handle_admin_message(update: Update, context: CallbackContext):
                     [
                         InlineKeyboardButton(texts[lang]['increase'], callback_data=f'limit_inc_{target_user}'),
                         InlineKeyboardButton(texts[lang]['decrease'], callback_data=f'limit_dec_{target_user}')
-                    ],
-                    [
-                        InlineKeyboardButton("Set Base Limit", callback_data=f'set_base_{target_user}')
                     ]
                 ]
                 
@@ -403,8 +336,7 @@ def handle_admin_message(update: Update, context: CallbackContext):
                     texts[lang]['current_limit'].format(
                         user_name=user_data['name'],
                         user_id=target_user,
-                        limit=user_data['limit'],
-                        base_limit=user_data['base_limit']
+                        limit=user_data['limit']
                     ),
                     reply_markup=InlineKeyboardMarkup(keyboard),
                     parse_mode='Markdown'
@@ -438,50 +370,26 @@ def handle_limit_actions(update: Update, context: CallbackContext):
     
     if action == 'inc':
         user_data['limit'] += 1
-        query.answer(text=texts[lang]['limit_change_success'].format(limit=user_data['limit']), show_alert=True)
     elif action == 'dec':
         if user_data['limit'] > 1:
             user_data['limit'] -= 1
-            query.answer(text=texts[lang]['limit_change_success'].format(limit=user_data['limit']), show_alert=True)
         else:
             query.answer(text="Limit cannot be less than 1", show_alert=True)
             return
-    elif action == 'base':
-        # Set current limit as base limit
-        user_data['base_limit'] = user_data['limit']
-        query.answer(text=texts[lang]['base_limit_updated'].format(
-            limit=user_data['base_limit'],
-            user_name=user_data['name'],
-            user_id=target_user
-        ), show_alert=True)
-    
-    # Update the message with new values
-    keyboard = [
-        [
-            InlineKeyboardButton(texts[lang]['increase'], callback_data=f'limit_inc_{target_user}'),
-            InlineKeyboardButton(texts[lang]['decrease'], callback_data=f'limit_dec_{target_user}')
-        ],
-        [
-            InlineKeyboardButton("Set Base Limit", callback_data=f'set_base_{target_user}')
-        ]
-    ]
     
     query.edit_message_text(
-        text=texts[lang]['current_limit'].format(
-            user_name=user_data['name'],
-            user_id=target_user,
+        text=texts[lang]['limit_updated'].format(
             limit=user_data['limit'],
-            base_limit=user_data['base_limit']
+            user_name=user_data['name'],
+            user_id=target_user
         ),
-        reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode='Markdown'
     )
+    query.answer(text=texts[lang]['limit_change_success'].format(limit=user_data['limit']), show_alert=True)
 
 def reset_daily_limits(context: CallbackContext):
-    for user_id, user_data in allowed_users.items():
+    for user_data in allowed_users.values():
         user_data['used'] = 0
-        # Reset to base limit at midnight
-        user_data['limit'] = user_data.get('base_limit', 5)
     logger.info("Daily copy limits have been reset")
 
 def error_handler(update: Update, context: CallbackContext):
@@ -493,16 +401,15 @@ def main():
     
     dp.add_handler(CommandHandler("start", start))
     dp.add_handler(CommandHandler("admin", admin_command))
-    dp.add_handler(CallbackQueryHandler(handle_copy, pattern='^copy_'))
+    dp.add_handler(CallbackQueryHandler(handle_copy, pattern='^generate_new_code$'))
     dp.add_handler(CallbackQueryHandler(change_language, pattern='^change_language$'))
     dp.add_handler(CallbackQueryHandler(admin_actions, pattern='^admin_'))
     dp.add_handler(CallbackQueryHandler(handle_limit_actions, pattern='^limit_'))
-    dp.add_handler(CallbackQueryHandler(handle_limit_actions, pattern='^set_base_'))
     dp.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_admin_message))
     dp.add_error_handler(error_handler)
     
     jq = updater.job_queue
-    jq.run_repeating(send_2fa_code, interval=30, first=0)
+    jq.run_repeating(send_2fa_code, interval=300, first=0)
     jq.run_daily(reset_daily_limits, time=datetime.strptime("00:00", "%H:%M").time())
     
     updater.start_polling()
