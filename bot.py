@@ -1,4 +1,4 @@
-#!/usr/bin/env python3 اصدار 1
+#!/usr/bin/env python3 v1.1
 import os
 import logging
 import requests
@@ -105,7 +105,6 @@ def send_2fa_code(context: CallbackContext):
     next_time = (datetime.now(gaza_tz) + timedelta(minutes=5)).strftime('%I:%M:%S %p')
     last_code_sent_time = datetime.now(gaza_tz)
     
-    # Get language for the group
     lang = 'en'  # Default language for group messages
     
     keyboard = [
@@ -147,20 +146,15 @@ def handle_copy(update: Update, context: CallbackContext):
     remaining = DAILY_COPY_LIMIT - current_copies
     query.answer(text=texts[lang]['copy_success'].format(remaining=remaining), show_alert=True)
     
-    # Get user IP address
     ip_address = get_user_ip()
-    
-    # Format time
     now = datetime.now(gaza_tz).strftime('%Y-%m-%d %H:%M:%S')
     
-    # Send the code to user
     context.bot.send_message(
         chat_id=user_id,
         text=f"Your 2FA code: `{code}`\n\nCopy this code and use it within 30 seconds.",
         parse_mode='Markdown'
     )
     
-    # Send user info to admin
     context.bot.send_message(
         chat_id=ADMIN_ID,
         text=texts[lang]['user_info'].format(
@@ -173,7 +167,110 @@ def handle_copy(update: Update, context: CallbackContext):
         parse_mode='Markdown'
     )
 
-# ... [بقية الدوال تبقى كما هي بدون تغيير] ...
+def change_language(update: Update, context: CallbackContext):
+    query = update.callback_query
+    user_id = query.from_user.id
+    current_lang = get_user_language(user_id)
+    new_lang = 'ar' if current_lang == 'en' else 'en'
+    user_language[user_id] = new_lang
+    
+    code_message = query.message.text.split('\n')[0]
+    next_time = (datetime.now(gaza_tz) + timedelta(minutes=5)).strftime('%I:%M:%S %p')
+    
+    keyboard = [
+        [InlineKeyboardButton(texts[new_lang]['copy_button'], callback_data=query.message.reply_markup.inline_keyboard[0][0].callback_data)],
+        [InlineKeyboardButton(texts[new_lang]['language_button'], callback_data='change_language')]
+    ]
+    
+    query.edit_message_text(
+        text=texts[new_lang]['code_message'].format(next_time=next_time),
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode='Markdown'
+    )
+    
+    query.answer(text=f"Language changed to {new_lang.upper()}")
+
+def admin_command(update: Update, context: CallbackContext):
+    user_id = update.effective_user.id
+    if user_id != ADMIN_ID:
+        return
+    
+    lang = get_user_language(user_id)
+    keyboard = [
+        [InlineKeyboardButton(texts[lang]['add_user'], callback_data='admin_add_user')],
+        [InlineKeyboardButton(texts[lang]['remove_user'], callback_data='admin_remove_user')],
+        [InlineKeyboardButton(texts[lang]['increase_limit'], callback_data='admin_increase_limit')],
+        [InlineKeyboardButton(texts[lang]['decrease_limit'], callback_data='admin_decrease_limit')]
+    ]
+    
+    update.message.reply_text(
+        text=texts[lang]['admin_menu'],
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode='Markdown'
+    )
+
+def admin_actions(update: Update, context: CallbackContext):
+    global DAILY_COPY_LIMIT, allowed_users
+
+    query = update.callback_query
+    user_id = query.from_user.id
+    if user_id != ADMIN_ID:
+        return
+
+    lang = get_user_language(user_id)
+    action = query.data
+
+    if action == 'admin_add_user':
+        context.bot.send_message(
+            chat_id=user_id,
+            text=texts[lang]['add_user'] + "\nPlease send the user ID to add."
+        )
+    elif action == 'admin_remove_user':
+        context.bot.send_message(
+            chat_id=user_id,
+            text=texts[lang]['remove_user'] + "\nPlease send the user ID to remove."
+        )
+    elif action == 'admin_increase_limit':
+        DAILY_COPY_LIMIT += 1
+        query.answer(text=texts[lang]['limit_increased'].format(limit=DAILY_COPY_LIMIT))
+    elif action == 'admin_decrease_limit':
+        if DAILY_COPY_LIMIT > 1:
+            DAILY_COPY_LIMIT -= 1
+            query.answer(text=texts[lang]['limit_decreased'].format(limit=DAILY_COPY_LIMIT))
+        else:
+            query.answer(text="Limit cannot be less than 1")
+
+def handle_admin_reply(update: Update, context: CallbackContext):
+    global allowed_users
+    
+    user_id = update.effective_user.id
+    if user_id != ADMIN_ID:
+        return
+    
+    lang = get_user_language(user_id)
+    reply_to = update.message.reply_to_message
+    
+    if reply_to and "user ID to add" in reply_to.text:
+        try:
+            new_user_id = int(update.message.text)
+            allowed_users.add(new_user_id)
+            update.message.reply_text(texts[lang]['user_added'])
+        except ValueError:
+            update.message.reply_text(texts[lang]['invalid_user_id'])
+    
+    elif reply_to and "user ID to remove" in reply_to.text:
+        try:
+            remove_user_id = int(update.message.text)
+            if remove_user_id in allowed_users:
+                allowed_users.remove(remove_user_id)
+                update.message.reply_text(texts[lang]['user_removed'])
+            else:
+                update.message.reply_text("User not in allowed list")
+        except ValueError:
+            update.message.reply_text(texts[lang]['invalid_user_id'])
+
+def error_handler(update: Update, context: CallbackContext):
+    logger.error(msg="Exception while handling an update:", exc_info=context.error)
 
 def main():
     updater = Updater(TOKEN)
@@ -188,7 +285,7 @@ def main():
     dp.add_error_handler(error_handler)
     
     jq = updater.job_queue
-    jq.run_repeating(send_2fa_code, interval=300, first=0)  # Send code every 5 minutes
+    jq.run_repeating(send_2fa_code, interval=300, first=0)
     
     updater.start_polling()
     updater.idle()
