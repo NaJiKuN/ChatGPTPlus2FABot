@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import os
 import logging
 from datetime import datetime, timedelta
@@ -92,18 +93,14 @@ def generate_2fa_code():
 def send_2fa_code(context: CallbackContext):
     global last_code_sent_time
     
-    # Generate code
     code = generate_2fa_code()
     next_time = (datetime.now(gaza_tz) + timedelta(minutes=5)).strftime('%I:%M:%S %p')
     last_code_sent_time = datetime.now(gaza_tz)
     
-    # Create keyboard with copy button
     keyboard = [
         [InlineKeyboardButton(texts['en']['copy_button'], callback_data=f'copy_{code}')],
         [InlineKeyboardButton(texts['en']['language_button'], callback_data='change_language')]
-    ]
     
-    # Send message to group
     context.bot.send_message(
         chat_id=GROUP_ID,
         text=texts['en']['code_message'].format(next_time=next_time),
@@ -116,34 +113,29 @@ def start(update: Update, context: CallbackContext):
     update.message.reply_text(f"Hello! I'm the 2FA bot. Your ID: {user_id}")
 
 def handle_copy(update: Update, context: CallbackContext):
-    global current_copies
+    global DAILY_COPY_LIMIT, current_copies, allowed_users, users_copy_count
+    
     query = update.callback_query
     user_id = query.from_user.id
     lang = get_user_language(user_id)
     
-    # Check if user is allowed
     if user_id not in allowed_users and user_id != ADMIN_ID:
         query.answer(text=texts[lang]['not_allowed'], show_alert=True)
         return
     
-    # Check daily limit
     if current_copies >= DAILY_COPY_LIMIT:
         query.answer(text=texts[lang]['copy_limit_reached'], show_alert=True)
         return
     
-    # Get the code from callback data
     code = query.data.split('_')[1]
     
-    # Increment copy count
     current_copies += 1
     users_copy_count[user_id] = users_copy_count.get(user_id, 0) + 1
     
-    # Notify user
     remaining = DAILY_COPY_LIMIT - current_copies
     query.answer(text=texts[lang]['copy_success'].format(remaining=remaining), show_alert=True)
     
-    # Notify admin (simplified IP for example)
-    ip = "123.45.67.89"  # In real app, get from update or external service
+    ip = "123.45.67.89"  # Replace with actual IP detection
     now = datetime.now(gaza_tz).strftime('%Y-%m-%d %H:%M:%S')
     context.bot.send_message(
         chat_id=ADMIN_ID,
@@ -158,7 +150,6 @@ def change_language(update: Update, context: CallbackContext):
     query = update.callback_query
     user_id = query.from_user.id
     
-    # Toggle language
     current_lang = get_user_language(user_id)
     new_lang = 'ar' if current_lang == 'en' else 'en'
     user_language[user_id] = new_lang
@@ -177,7 +168,6 @@ def admin_command(update: Update, context: CallbackContext):
         [InlineKeyboardButton(texts[lang]['remove_user'], callback_data='admin_remove_user')],
         [InlineKeyboardButton(texts[lang]['increase_limit'], callback_data='admin_increase_limit')],
         [InlineKeyboardButton(texts[lang]['decrease_limit'], callback_data='admin_decrease_limit')]
-    ]
     
     update.message.reply_text(
         text=texts[lang]['admin_menu'],
@@ -186,6 +176,8 @@ def admin_command(update: Update, context: CallbackContext):
     )
 
 def admin_actions(update: Update, context: CallbackContext):
+    global DAILY_COPY_LIMIT
+    
     query = update.callback_query
     user_id = query.from_user.id
     if user_id != ADMIN_ID:
@@ -205,11 +197,9 @@ def admin_actions(update: Update, context: CallbackContext):
             text=texts[lang]['remove_user'] + "\nPlease send the user ID to remove."
         )
     elif action == 'admin_increase_limit':
-        global DAILY_COPY_LIMIT
         DAILY_COPY_LIMIT += 1
         query.answer(text=texts[lang]['limit_increased'].format(limit=DAILY_COPY_LIMIT))
     elif action == 'admin_decrease_limit':
-        global DAILY_COPY_LIMIT
         if DAILY_COPY_LIMIT > 1:
             DAILY_COPY_LIMIT -= 1
             query.answer(text=texts[lang]['limit_decreased'].format(limit=DAILY_COPY_LIMIT))
@@ -217,6 +207,8 @@ def admin_actions(update: Update, context: CallbackContext):
             query.answer(text="Limit cannot be less than 1")
 
 def handle_admin_reply(update: Update, context: CallbackContext):
+    global allowed_users
+    
     user_id = update.effective_user.id
     if user_id != ADMIN_ID:
         return
