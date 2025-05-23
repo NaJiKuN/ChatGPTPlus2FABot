@@ -1,4 +1,4 @@
-#!/usr/bin/env python3 v2.0
+#!/usr/bin/env python3 v2.1
 import os
 import logging
 import requests
@@ -23,7 +23,7 @@ BOT_ID = 792534650
 TOTP_SECRET = "ZV3YUXYVPOZSUOT43SKVDGFFVWBZXOVI"
 
 # Global variables
-allowed_users = {ADMIN_ID: {'limit': 5, 'used': 0, 'name': 'Admin'}}
+allowed_users = {ADMIN_ID: {'limit': 5, 'used': 0, 'name': 'Admin', 'base_limit': 5}}
 user_language = {}
 last_code_sent_time = None
 pending_actions = {}
@@ -147,7 +147,8 @@ def handle_copy(update: Update, context: CallbackContext):
         allowed_users[user_id] = {
             'limit': 5,
             'used': 0,
-            'name': user_name
+            'name': user_name,
+            'base_limit': 5
         }
     
     user_data = allowed_users[user_id]
@@ -303,7 +304,8 @@ def handle_admin_message(update: Update, context: CallbackContext):
                 allowed_users[target_user] = {
                     'limit': 5,
                     'used': 0,
-                    'name': f"User {target_user}"
+                    'name': f"User {target_user}",
+                    'base_limit': 5
                 }
                 update.message.reply_text(
                     texts[lang]['user_added'].format(user_id=target_user)
@@ -370,9 +372,11 @@ def handle_limit_actions(update: Update, context: CallbackContext):
     
     if action == 'inc':
         user_data['limit'] += 1
+        user_data['base_limit'] = user_data['limit']  # Update base limit as well
     elif action == 'dec':
         if user_data['limit'] > 1:
             user_data['limit'] -= 1
+            user_data['base_limit'] = user_data['limit']  # Update base limit as well
         else:
             query.answer(text="Limit cannot be less than 1", show_alert=True)
             return
@@ -388,9 +392,10 @@ def handle_limit_actions(update: Update, context: CallbackContext):
     query.answer(text=texts[lang]['limit_change_success'].format(limit=user_data['limit']), show_alert=True)
 
 def reset_daily_limits(context: CallbackContext):
+    # Only reset the used counter, keep the limit as set by admin
     for user_data in allowed_users.values():
         user_data['used'] = 0
-    logger.info("Daily copy limits have been reset")
+    logger.info("Daily copy counters have been reset (limits remain unchanged)")
 
 def error_handler(update: Update, context: CallbackContext):
     logger.error(msg="Exception while handling an update:", exc_info=context.error)
