@@ -1,4 +1,4 @@
-#!/usr/bin/env python3 v1.2
+#!/usr/bin/env python3 v1.3
 import os
 import logging
 import requests
@@ -23,12 +23,10 @@ BOT_ID = 792534650
 TOTP_SECRET = "ZV3YUXYVPOZSUOT43SKVDGFFVWBZXOVI"
 
 # Global variables
-DAILY_COPY_LIMIT = 5
-current_copies = 0
 allowed_users = {ADMIN_ID: {'limit': 5, 'used': 0, 'name': 'Admin'}}  # {user_id: {limit: int, used: int, name: str}}
-users_copy_count = {}
 user_language = {}
 last_code_sent_time = None
+pending_actions = {}  # {admin_id: {'action': str, 'data': dict}}
 
 # Set up logging
 logging.basicConfig(
@@ -56,13 +54,14 @@ texts = {
         'list_users': '👥 List All Users',
         'user_added': '✅ User added successfully with limit {limit} copies/day.',
         'user_removed': '✅ User removed successfully.',
-        'limit_set': '✅ Daily limit set to {limit} for user {user_id}.',
+        'limit_set': '✅ Daily limit set to {limit} for user {user_name} (ID: {user_id}).',
         'invalid_user_id': '❌ Invalid user ID.',
         'user_info': '👤 *User Info*\n\n🔹 Name: {user_name}\n🔹 ID: `{user_id}`\n🔹 IP: `{ip}`\n🔹 Time: `{time}`\n🔹 Code: `{code}`',
         'user_list': '👥 *User List*\n\n{users_list}',
         'user_entry': '🔹 {user_name} (ID: {user_id}) - {used}/{limit} copies today',
         'send_user_id': 'Please send the user ID:',
-        'send_new_limit': 'Please send the new daily limit for this user:'
+        'send_new_limit': 'Please send the new daily limit for this user:',
+        'send_user_name': 'Please send the user name:'
     },
     'ar': {
         'code_message': '🔐 *رمز المصادقة الثنائية*\n\nالرمز التالي في: {next_time}',
@@ -78,13 +77,14 @@ texts = {
         'list_users': '👥 عرض جميع الأعضاء',
         'user_added': '✅ تمت إضافة العضو بنجاح مع حد {limit} نسخة/يوم.',
         'user_removed': '✅ تمت إزالة العضو بنجاح.',
-        'limit_set': '✅ تم تعيين الحد اليومي إلى {limit} للعضو {user_id}.',
+        'limit_set': '✅ تم تعيين الحد اليومي إلى {limit} للعضو {user_name} (ID: {user_id}).',
         'invalid_user_id': '❌ معرّف العضو غير صالح.',
         'user_info': '👤 *معلومات العضو*\n\n🔹 الاسم: {user_name}\n🔹 الرقم: `{user_id}`\n🔹 الأيبي: `{ip}`\n🔹 الوقت: `{time}`\n🔹 الرمز: `{code}`',
         'user_list': '👥 *قائمة الأعضاء*\n\n{users_list}',
         'user_entry': '🔹 {user_name} (ID: {user_id}) - {used}/{limit} نسخ اليوم',
         'send_user_id': 'الرجاء إرسال معرف المستخدم:',
-        'send_new_limit': 'الرجاء إرسال الحد اليومي الجديد لهذا المستخدم:'
+        'send_new_limit': 'الرجاء إرسال الحد اليومي الجديد لهذا المستخدم:',
+        'send_user_name': 'الرجاء إرسال اسم المستخدم:'
     }
 }
 
@@ -134,12 +134,18 @@ def handle_copy(update: Update, context: CallbackContext):
     user_id = query.from_user.id
     user_name = query.from_user.full_name
     lang = get_user_language(user_id)
+    code = query.data.split('_')[1]
     
+    # Add user to allowed_users if not exists (with default limit 5)
     if user_id not in allowed_users:
-        query.answer(text=texts[lang]['not_allowed'], show_alert=True)
-        return
+        allowed_users[user_id] = {
+            'limit': 5,
+            'used': 0,
+            'name': user_name
+        }
     
     user_data = allowed_users[user_id]
+    
     if user_data['used'] >= user_data['limit']:
         query.answer(
             text=texts[lang]['copy_limit_reached'].format(
@@ -150,10 +156,10 @@ def handle_copy(update: Update, context: CallbackContext):
         )
         return
     
-    code = query.data.split('_')[1]
     user_data['used'] += 1
-    
     remaining = user_data['limit'] - user_data['used']
+    
+    # Simulate copy to clipboard (shows confirmation message)
     query.answer(
         text=texts[lang]['copy_success'].format(
             remaining=remaining,
@@ -162,17 +168,10 @@ def handle_copy(update: Update, context: CallbackContext):
         show_alert=True
     )
     
+    # Log to admin
     ip_address = get_user_ip()
     now = datetime.now(gaza_tz).strftime('%Y-%m-%d %H:%M:%S')
     
-    # Send code directly to user (simulates copy to clipboard)
-    context.bot.send_message(
-        chat_id=user_id,
-        text=f"Your 2FA code: `{code}`\n\nThis code is valid for 30 seconds.",
-        parse_mode='Markdown'
-    )
-    
-    # Send notification to admin
     context.bot.send_message(
         chat_id=ADMIN_ID,
         text=texts[lang]['user_info'].format(
@@ -237,37 +236,47 @@ def admin_actions(update: Update, context: CallbackContext):
     action = query.data
 
     if action == 'admin_add_user':
+        pending_actions[user_id] = {'action': 'add_user', 'step': 1}
         context.bot.send_message(
             chat_id=user_id,
-            text=texts[lang]['add_user'] + "\n" + texts[lang]['send_user_id']
+            text=texts[lang]['send_user_id']
         )
     elif action == 'admin_remove_user':
+        pending_actions[user_id] = {'action': 'remove_user', 'step': 1}
         context.bot.send_message(
             chat_id=user_id,
-            text=texts[lang]['remove_user'] + "\n" + texts[lang]['send_user_id']
+            text=texts[lang]['send_user_id']
         )
     elif action == 'admin_set_limit':
+        pending_actions[user_id] = {'action': 'set_limit', 'step': 1}
         context.bot.send_message(
             chat_id=user_id,
-            text=texts[lang]['set_limit'] + "\n" + texts[lang]['send_user_id']
+            text=texts[lang]['send_user_id']
         )
     elif action == 'admin_list_users':
         list_users(update, context)
 
 def list_users(update: Update, context: CallbackContext):
-    lang = get_user_language(ADMIN_ID)
+    user_id = update.effective_user.id or update.callback_query.from_user.id
+    if user_id != ADMIN_ID:
+        return
+    
+    lang = get_user_language(user_id)
     users_list = []
     
-    for user_id, user_data in allowed_users.items():
+    for uid, user_data in allowed_users.items():
         users_list.append(texts[lang]['user_entry'].format(
             user_name=user_data['name'],
-            user_id=user_id,
+            user_id=uid,
             used=user_data['used'],
             limit=user_data['limit']
         ))
     
     if not users_list:
         users_list.append("No users available")
+    
+    if update.callback_query:
+        update.callback_query.answer()
     
     context.bot.send_message(
         chat_id=ADMIN_ID,
@@ -279,32 +288,44 @@ def list_users(update: Update, context: CallbackContext):
 
 def handle_admin_reply(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
-    if user_id != ADMIN_ID:
+    if user_id != ADMIN_ID or user_id not in pending_actions:
         return
     
     lang = get_user_language(user_id)
-    reply_to = update.message.reply_to_message
+    action_data = pending_actions[user_id]
+    text = update.message.text
     
-    if reply_to and ("Add User" in reply_to.text or "إضافة عضو" in reply_to.text):
-        try:
-            new_user_id = int(update.message.text)
+    if action_data['action'] == 'add_user':
+        if action_data['step'] == 1:
+            try:
+                new_user_id = int(text)
+                action_data['user_id'] = new_user_id
+                action_data['step'] = 2
+                update.message.reply_text(texts[lang]['send_user_name'])
+            except ValueError:
+                update.message.reply_text(texts[lang]['invalid_user_id'])
+                del pending_actions[user_id]
+        elif action_data['step'] == 2:
+            user_name = text
+            new_user_id = action_data['user_id']
+            
             if new_user_id not in allowed_users:
                 allowed_users[new_user_id] = {
                     'limit': 5,
                     'used': 0,
-                    'name': f"User {new_user_id}"
+                    'name': user_name
                 }
                 update.message.reply_text(
                     texts[lang]['user_added'].format(limit=5)
                 )
             else:
                 update.message.reply_text("User already exists")
-        except ValueError:
-            update.message.reply_text(texts[lang]['invalid_user_id'])
+            
+            del pending_actions[user_id]
     
-    elif reply_to and ("Remove User" in reply_to.text or "إزالة عضو" in reply_to.text):
+    elif action_data['action'] == 'remove_user':
         try:
-            remove_user_id = int(update.message.text)
+            remove_user_id = int(text)
             if remove_user_id in allowed_users:
                 del allowed_users[remove_user_id]
                 update.message.reply_text(texts[lang]['user_removed'])
@@ -312,28 +333,37 @@ def handle_admin_reply(update: Update, context: CallbackContext):
                 update.message.reply_text("User not in allowed list")
         except ValueError:
             update.message.reply_text(texts[lang]['invalid_user_id'])
+        del pending_actions[user_id]
     
-    elif reply_to and ("Set User Limit" in reply_to.text or "تعيين حد للمستخدم" in reply_to.text):
-        try:
-            parts = update.message.text.split()
-            if len(parts) == 2:
-                user_id = int(parts[0])
-                new_limit = int(parts[1])
-                
-                if user_id in allowed_users:
-                    allowed_users[user_id]['limit'] = new_limit
-                    update.message.reply_text(
-                        texts[lang]['limit_set'].format(
-                            limit=new_limit,
-                            user_id=user_id
-                        )
-                    )
+    elif action_data['action'] == 'set_limit':
+        if action_data['step'] == 1:
+            try:
+                target_user = int(text)
+                if target_user in allowed_users:
+                    action_data['target_user'] = target_user
+                    action_data['step'] = 2
+                    update.message.reply_text(texts[lang]['send_new_limit'])
                 else:
                     update.message.reply_text("User not found")
-            else:
-                update.message.reply_text("Please send user ID and new limit separated by space")
-        except ValueError:
-            update.message.reply_text("Invalid input. Please send user ID and new limit as numbers")
+                    del pending_actions[user_id]
+            except ValueError:
+                update.message.reply_text(texts[lang]['invalid_user_id'])
+                del pending_actions[user_id]
+        elif action_data['step'] == 2:
+            try:
+                new_limit = int(text)
+                target_user = action_data['target_user']
+                allowed_users[target_user]['limit'] = new_limit
+                update.message.reply_text(
+                    texts[lang]['limit_set'].format(
+                        limit=new_limit,
+                        user_name=allowed_users[target_user]['name'],
+                        user_id=target_user
+                    )
+                )
+            except ValueError:
+                update.message.reply_text("Invalid limit value")
+            del pending_actions[user_id]
 
 def reset_daily_limits(context: CallbackContext):
     for user_data in allowed_users.values():
