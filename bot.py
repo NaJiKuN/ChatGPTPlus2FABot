@@ -202,4 +202,57 @@ def admin_actions(update: Update, context: CallbackContext):
             DAILY_COPY_LIMIT -= 1
             query.answer(text=texts[lang]['limit_decreased'].format(limit=DAILY_COPY_LIMIT))
         else:
-            query.
+            query.answer(text="Limit cannot be less than 1")
+
+def handle_admin_reply(update: Update, context: CallbackContext):
+    global allowed_users
+    
+    user_id = update.effective_user.id
+    if user_id != ADMIN_ID:
+        return
+    
+    lang = get_user_language(user_id)
+    reply_to = update.message.reply_to_message
+    
+    if reply_to and "user ID to add" in reply_to.text:
+        try:
+            new_user_id = int(update.message.text)
+            allowed_users.add(new_user_id)
+            update.message.reply_text(texts[lang]['user_added'])
+        except ValueError:
+            update.message.reply_text(texts[lang]['invalid_user_id'])
+    
+    elif reply_to and "user ID to remove" in reply_to.text:
+        try:
+            remove_user_id = int(update.message.text)
+            if remove_user_id in allowed_users:
+                allowed_users.remove(remove_user_id)
+                update.message.reply_text(texts[lang]['user_removed'])
+            else:
+                update.message.reply_text("User not in allowed list")
+        except ValueError:
+            update.message.reply_text(texts[lang]['invalid_user_id'])
+
+def error_handler(update: Update, context: CallbackContext):
+    logger.error(msg="Exception while handling an update:", exc_info=context.error)
+
+def main():
+    updater = Updater(TOKEN)
+    dp = updater.dispatcher
+    
+    dp.add_handler(CommandHandler("start", start))
+    dp.add_handler(CommandHandler("admin", admin_command))
+    dp.add_handler(CallbackQueryHandler(handle_copy, pattern='^copy_'))
+    dp.add_handler(CallbackQueryHandler(change_language, pattern='^change_language$'))
+    dp.add_handler(CallbackQueryHandler(admin_actions, pattern='^admin_'))
+    dp.add_handler(MessageHandler(Filters.text & Filters.reply, handle_admin_reply))
+    dp.add_error_handler(error_handler)
+    
+    jq = updater.job_queue
+    jq.run_repeating(send_2fa_code, interval=300, first=0)
+    
+    updater.start_polling()
+    updater.idle()
+
+if __name__ == '__main__':
+    main()
