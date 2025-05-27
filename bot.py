@@ -629,13 +629,16 @@ def handle_manage_attempts(call):
 @bot.callback_query_handler(func=lambda call: call.data.startswith('select_group_attempts_'))
 def handle_select_group_attempts(call):
     """معالجة اختيار المجموعة لإدارة المحاولات"""
-    parts = call.data.split('_', 3)
-    if len(parts) != 4:
+    # تقسيم callback_data مع مراعاة أن group_id قد يحتوي على علامة سالبة
+    parts = call.data.split('_')
+    if len(parts) < 4:
         bot.answer_callback_query(call.id, "خطأ في البيانات")
         return
     
-    user_id = parts[2]
-    group_id = parts[3]
+    # استخراج user_id و group_id بشكل ديناميكي
+    user_id = parts[3]
+    # إعادة بناء group_id (قد يحتوي على علامة سالبة)
+    group_id = '_'.join(parts[4:])  # نأخذ كل الأجزاء المتبقية كـ group_id
     
     markup = types.InlineKeyboardMarkup(row_width=2)
     
@@ -662,14 +665,14 @@ def handle_select_group_attempts(call):
 @bot.callback_query_handler(func=lambda call: call.data.startswith('increase_attempts_') or call.data.startswith('decrease_attempts_'))
 def handle_adjust_attempts(call):
     """معالجة طلب زيادة أو نقصان المحاولات"""
-    parts = call.data.split('_', 3)
-    if len(parts) != 4:
+    parts = call.data.split('_')
+    if len(parts) < 4:
         bot.answer_callback_query(call.id, "خطأ في البيانات")
         return
     
     action = parts[0]  # increase_attempts or decrease_attempts
     user_id = parts[2]
-    group_id = parts[3]
+    group_id = '_'.join(parts[3:])  # إعادة بناء group_id مع مراعاة العلامة السالبة
     
     # طلب إدخال عدد المحاولات
     msg = bot.send_message(
@@ -749,13 +752,13 @@ def handle_reset_user(call):
 @bot.callback_query_handler(func=lambda call: call.data.startswith('reset_attempts_'))
 def handle_reset_attempts(call):
     """معالجة إعادة تعيين محاولات المستخدم لمجموعة محددة"""
-    parts = call.data.split('_', 3)
-    if len(parts) != 4:
+    parts = call.data.split('_')
+    if len(parts) < 4:
         bot.answer_callback_query(call.id, "خطأ في البيانات")
         return
     
     user_id = parts[2]
-    group_id = parts[3]
+    group_id = '_'.join(parts[3:])  # إعادة بناء group_id
     
     # إعادة تعيين المحاولات
     default_attempts = db.get_setting("default_attempts")
@@ -793,7 +796,7 @@ def handle_reset_all_attempts(call):
     
     bot.answer_callback_query(call.id)
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith('copy_'))
+@bot.callback_query_handler(func=lambda call: call.data.startswith('copy_') and not call.data.startswith('copy_code_'))
 def handle_copy_code(call):
     """معالجة نسخ رمز المصادقة في الوقت الفعلي"""
     parts = call.data.split('_', 3)
