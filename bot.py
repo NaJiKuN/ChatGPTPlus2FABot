@@ -1,287 +1,231 @@
-#!/usr/bin/env python3 vv1.0
+#xx1.0
+import logging
 import os
 import sqlite3
-import logging
+import threading
+import time
 from datetime import datetime, timedelta
-from pytz import timezone
-import pytz
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters
 import pyotp
-from telegram import (
-    Update,
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
-    InputMediaPhoto,
-)
-from telegram.ext import (
-    Updater,
-    CommandHandler,
-    CallbackQueryHandler,
-    MessageHandler,
-    Filters,
-    CallbackContext,
-    JobQueue,
-)
+import pytz
 
-# Configuration
-TOKEN = "8119053401:AAHuqgTkiq6M8rT9VSHYEnIl96BHt9lXIZM"
-ADMINS = [764559466]
-DB_PATH = '/home/ec2-user/projects/ChatGPTPlus2FABot/bot.db'
-PALESTINE_TZ = timezone('Asia/Gaza')
-
-# Initialize database
-conn = sqlite3.connect(DB_PATH)
-c = conn.cursor()
-c.execute('''CREATE TABLE IF NOT EXISTS groups
-             (group_id TEXT PRIMARY KEY, 
-              totp_secret TEXT,
-              interval INTEGER DEFAULT 10,
-              is_active INTEGER DEFAULT 1,
-              time_format TEXT DEFAULT '24h',
-              timezone TEXT DEFAULT 'UTC',
-              max_clicks INTEGER DEFAULT 3)''')
-c.execute('''CREATE TABLE IF NOT EXISTS clicks
-             (user_id TEXT, 
-              group_id TEXT,
-              count INTEGER,
-              PRIMARY KEY(user_id, group_id))''')
-conn.commit()
-conn.close()
-
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
+# إعداد السجل لتتبع الأخطاء
+logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-def get_group_data(group_id):
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("SELECT * FROM groups WHERE group_id=?", (group_id,))
-    data = c.fetchone()
-    conn.close()
-    return data
+# إعدادات البوت
+TOKEN = "8119053401:AAHuqgTkiq6M8rT9VSHYEnIl96BHt9lXIZM"
+DB_PATH = "/home/ec2-user/projects/ChatGPTPlus2FABot/bot.db"
 
-def update_group_data(group_id, field, value):
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute(f"UPDATE groups SET {field}=? WHERE group_id=?", (value, group_id))
-    conn.commit()
-    conn.close()
+# إعداد قاعدة البيانات
+conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+cursor = conn.cursor()
 
-def track_click(user_id, group_id):
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute('''INSERT OR IGNORE INTO clicks VALUES (?, ?, 0)
-              ON CONFLICT(user_id, group_id) DO UPDATE SET count=count+1''',
-              (user_id, group_id))
-    conn.commit()
-    conn.close()
+# إنشاء الجداول إذا لم تكن موجودة
+cursor.execute('''CREATE TABLE IF NOT EXISTS groups (
+                    group_id TEXT PRIMARY KEY,
+                    totp_secret TEXT,
+                    update_interval INTEGER,
+                    message_format TEXT,
+                    max_clicks INTEGER,
+                    is_active INTEGER DEFAULT 1
+                )''')
+cursor.execute('''CREATE TABLE IF NOT EXISTS admins (
+                    admin_id TEXT PRIMARY KEY
+                )''')
+cursor.execute('''CREATE TABLE IF NOT EXISTS user_clicks (
+                    group_id TEXT,
+                    user_id TEXT,
+                    clicks_used INTEGER,
+                    PRIMARY KEY (group_id, user_id)
+                )''')
+conn.commit()
 
-def get_remaining_clicks(user_id, group_id):
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("SELECT max_clicks FROM groups WHERE group_id=?", (group_id,))
-    max_clicks = c.fetchone()[0]
-    c.execute("SELECT count FROM clicks WHERE user_id=? AND group_id=?", (user_id, group_id))
-    current = c.fetchone()[0] if c.fetchone() else 0
-    conn.close()
-    return max_clicks - current
+# إضافة المسؤول الافتراضي
+cursor.execute("INSERT OR IGNORE INTO admins (admin_id) VALUES (?)", ("764559466",))
+conn.commit()
 
-def generate_code(secret):
-    return pyotp.TOTP(secret).now()
+# دالة للتحقق مما إذا كان المستخدم مسؤولاً
+def is_admin(user_id):
+    cursor.execute("SELECT * FROM admins WHERE admin_id = ?", (str(user_id),))
+    return cursor.fetchone() is not None
 
-def get_next_update_time(interval, tz):
-    now = datetime.now(pytz.timezone(tz))
-    next_time = now + timedelta(minutes=interval)
-    return next_time
+# دالة للحصول على الوقت الحالي بناءً على التنسيق
+def get_current_time(format_type):
+    if format_type == "UTC":
+        tz = pytz.utc
+    elif format_type == "Palestine":
+        tz = pytz.timezone("Asia/Gaza")
+    else:
+        tz = pytz.utc
+    return datetime.now(tz).strftime("%I:%M:%S %p")
 
-def format_time(dt, time_format, tz):
-    local_dt = dt.astimezone(pytz.timezone(tz))
-    if time_format == '12h':
-        return local_dt.strftime("%I:%M:%S %p")
-    return local_dt.strftime("%H:%M:%S")
+# دالة لتوليد رمز TOTP
+def generate_totp(secret):
+    totp = pyotp.TOTP(secret)
+    return totp.now()
 
-def send_2fa_message(context):
-    job = context.job
-    group_id = job.context['group_id']
-    data = get_group_data(group_id)
-    
-    if not data or not data[3]:  # Check if active
+# دالة لإرسال الرمز إلى المجموعة
+def send_code_to_group(application, group_id, secret, format_type):
+    code = generate_totp(secret)
+    next_time = (datetime.now() + timedelta(minutes=10)).strftime("%I:%M:%S %p")
+    message = f"🔐 2FA Verification Code\n\nNext code at: {next_time}"
+    keyboard = [[InlineKeyboardButton("Copy Code", callback_data=f"copy_code_{group_id}_{code}")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    application.bot.send_message(chat_id=group_id, text=message, reply_markup=reply_markup)
+
+# دالة لجدولة إرسال الرموز
+def schedule_code_sending(application, group_id, secret, interval, format_type):
+    while True:
+        cursor.execute("SELECT is_active FROM groups WHERE group_id = ?", (group_id,))
+        is_active = cursor.fetchone()[0]
+        if is_active:
+            send_code_to_group(application, group_id, secret, format_type)
+        time.sleep(interval * 60)
+
+# معالج الأمر /admin
+async def admin_command(update: Update, context):
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text("ليس لديك صلاحية لاستخدام هذا الأمر.")
         return
-    
-    secret, interval, _, _, time_format, tz, max_clicks = data
-    code = generate_code(secret)
-    next_time = get_next_update_time(interval, tz)
-    
-    keyboard = InlineKeyboardMarkup([[
-        InlineKeyboardButton(
-            "📋 Copy Code",
-            callback_data=f"show_code:{group_id}"
-        )
-    ]])
-    
-    message = [
-        "🔐 2FA Verification Code",
-        "",
-        f"Next code at: {format_time(next_time, time_format, tz)}"
-    ]
-    
-    context.bot.send_message(
-        chat_id=group_id,
-        text='\n'.join(message),
-        reply_markup=keyboard
-    )
-
-def start(update: Update, context: CallbackContext):
-    update.message.reply_text("Welcome to 2FA Bot!")
-
-def admin_menu(update: Update, context: CallbackContext):
-    user_id = update.effective_user.id
-    if str(user_id) not in ADMINS:
-        return
-    
     keyboard = [
-        [InlineKeyboardButton("Add/Edit Group", callback_data='admin_add_group')],
-        [InlineKeyboardButton("Set Interval", callback_data='admin_set_interval')],
-        [InlineKeyboardButton("Customize Message", callback_data='admin_customize')]
+        [InlineKeyboardButton("إضافة مجموعة", callback_data="add_group")],
+        [InlineKeyboardButton("تحديد فترة التحديث", callback_data="set_interval")],
+        [InlineKeyboardButton("تخصيص شكل الرسالة", callback_data="set_format")],
+        [InlineKeyboardButton("تشغيل/إيقاف البوت", callback_data="toggle_bot")],
     ]
-    
-    update.message.reply_text(
-        "Admin Panel:",
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text("اختر الخيار:", reply_markup=reply_markup)
 
-def handle_admin_callback(update: Update, context: CallbackContext):
+# معالج الضغط على الأزرار
+async def button_handler(update: Update, context):
     query = update.callback_query
     data = query.data
-    
-    if data == 'admin_add_group':
-        query.message.reply_text("Please enter Group ID:")
-        context.user_data['admin_action'] = 'add_group'
-    
-    elif data.startswith('admin_set_interval:'):
-        group_id = data.split(':')[1]
-        context.user_data['selected_group'] = group_id
-        query.message.reply_text("Enter new interval in minutes:")
-        context.user_data['admin_action'] = 'set_interval'
-    
-    elif data.startswith('show_code:'):
-        group_id = data.split(':')[1]
-        user_id = query.from_user.id
-        remaining = get_remaining_clicks(user_id, group_id)
-        
-        if remaining <= 0:
-            query.answer("No remaining attempts!", show_alert=True)
+    await query.answer()
+
+    if data == "add_group":
+        await query.message.reply_text("أدخل معرف المجموعة:")
+        context.user_data["step"] = "enter_group_id"
+    elif data == "set_interval":
+        cursor.execute("SELECT group_id FROM groups")
+        groups = cursor.fetchall()
+        if not groups:
+            await query.message.reply_text("لا توجد مجموعات مضافة.")
             return
-        
-        secret = get_group_data(group_id)[1]
-        code = generate_code(secret)
-        track_click(user_id, group_id)
-        
-        query.answer(f"Code: {code} (Remaining: {remaining-1})", show_alert=True)
-
-def handle_admin_input(update: Update, context: CallbackContext):
-    user_id = update.effective_user.id
-    if str(user_id) not in ADMINS:
-        return
-    
-    action = context.user_data.get('admin_action')
-    text = update.message.text
-    
-    if action == 'add_group':
-        # Verify group exists and bot is admin
-        try:
-            chat = context.bot.get_chat(text)
-            if chat.type != 'supergroup':
-                raise Exception()
-                
-            admins = context.bot.get_chat_administrators(text)
-            if not any(admin.user.id == context.bot.id for admin in admins):
-                raise Exception()
-            
-            # Save group
-            conn = sqlite3.connect(DB_PATH)
-            c = conn.cursor()
-            c.execute('''INSERT OR IGNORE INTO groups(group_id) VALUES (?)''', (text,))
+        keyboard = [[InlineKeyboardButton(group[0], callback_data=f"select_group_interval_{group[0]}")] for group in groups]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.message.reply_text("اختر المجموعة:", reply_markup=reply_markup)
+    elif data.startswith("select_group_interval_"):
+        group_id = data.split("_")[-1]
+        context.user_data["selected_group"] = group_id
+        await query.message.reply_text("أدخل فترة التحديث بالدقائق:")
+        context.user_data["step"] = "enter_interval"
+    elif data == "set_format":
+        cursor.execute("SELECT group_id FROM groups")
+        groups = cursor.fetchall()
+        if not groups:
+            await query.message.reply_text("لا توجد مجموعات مضافة.")
+            return
+        keyboard = [[InlineKeyboardButton(group[0], callback_data=f"select_group_format_{group[0]}")] for group in groups]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.message.reply_text("اختر المجموعة:", reply_markup=reply_markup)
+    elif data.startswith("select_group_format_"):
+        group_id = data.split("_")[-1]
+        context.user_data["selected_group"] = group_id
+        keyboard = [
+            [InlineKeyboardButton("UTC", callback_data="format_UTC")],
+            [InlineKeyboardButton("Palestine", callback_data="format_Palestine")],
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.message.reply_text("اختر التنسيق:", reply_markup=reply_markup)
+    elif data.startswith("format_"):
+        format_type = data.split("_")[1]
+        group_id = context.user_data["selected_group"]
+        cursor.execute("UPDATE groups SET message_format = ? WHERE group_id = ?", (format_type, group_id))
+        conn.commit()
+        await query.message.reply_text(f"تم تعيين التنسيق إلى {format_type} للمجموعة {group_id}")
+    elif data == "toggle_bot":
+        cursor.execute("SELECT group_id FROM groups")
+        groups = cursor.fetchall()
+        if not groups:
+            await query.message.reply_text("لا توجد مجموعات مضافة.")
+            return
+        keyboard = [[InlineKeyboardButton(group[0], callback_data=f"toggle_group_{group[0]}")] for group in groups]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.message.reply_text("اختر المجموعة لتشغيل/إيقاف البوت:", reply_markup=reply_markup)
+    elif data.startswith("toggle_group_"):
+        group_id = data.split("_")[-1]
+        cursor.execute("SELECT is_active FROM groups WHERE group_id = ?", (group_id,))
+        is_active = cursor.fetchone()[0]
+        new_state = 0 if is_active else 1
+        cursor.execute("UPDATE groups SET is_active = ? WHERE group_id = ?", (new_state, group_id))
+        conn.commit()
+        state_text = "مشغل" if new_state else "موقف"
+        await query.message.reply_text(f"تم تعيين حالة البوت للمجموعة {group_id} إلى: {state_text}")
+    elif data.startswith("copy_code_"):
+        parts = data.split("_")
+        group_id = parts[2]
+        code = parts[3]
+        user_id = query.from_user.id
+        cursor.execute("SELECT max_clicks FROM groups WHERE group_id = ?", (group_id,))
+        max_clicks = cursor.fetchone()[0]
+        cursor.execute("SELECT clicks_used FROM user_clicks WHERE group_id = ? AND user_id = ?", (group_id, str(user_id)))
+        user_clicks = cursor.fetchone()
+        clicks_used = user_clicks[0] if user_clicks else 0
+        remaining = max_clicks - clicks_used
+        if clicks_used < max_clicks:
+            await query.answer(code, show_alert=True)
+            clicks_used += 1
+            cursor.execute("INSERT OR REPLACE INTO user_clicks (group_id, user_id, clicks_used) VALUES (?, ?, ?)", 
+                           (group_id, str(user_id), clicks_used))
             conn.commit()
-            conn.close()
-            
-            update.message.reply_text("Group added! Now send TOTP_SECRET:")
-            context.user_data['admin_action'] = 'add_secret'
-            context.user_data['current_group'] = text
-            
-        except Exception as e:
-            update.message.reply_text("Invalid group or bot not admin!")
-            context.user_data.clear()
-    
-    elif action == 'add_secret':
-        group_id = context.user_data['current_group']
-        try:
-            # Validate secret
-            pyotp.TOTP(text).now()
-            
-            update_group_data(group_id, 'totp_secret', text)
-            
-            # Schedule job
-            current_jobs = context.job_queue.get_jobs_by_name(group_id)
-            for job in current_jobs:
-                job.schedule_removal()
-            
-            data = get_group_data(group_id)
-            interval = data[2]
-            
-            context.job_queue.run_repeating(
-                send_2fa_message,
-                interval=interval*60,
-                first=10,
-                context={'group_id': group_id},
-                name=group_id
-            )
-            
-            update.message.reply_text("Group configured successfully!")
-            context.user_data.clear()
-            
-        except:
-            update.message.reply_text("Invalid TOTP_SECRET! Try again:")
+            await query.message.reply_text(f"تم نسخ الرمز. المحاولات المتبقية: {remaining - 1}")
+        else:
+            await query.answer(f"لقد استنفدت عدد المحاولات المسموح بها ({max_clicks}).", show_alert=True)
+            await query.message.reply_text(f"المحاولات المتبقية: 0")
 
-def error_handler(update: Update, context: CallbackContext):
-    logger.error(msg="Exception while handling update:", exc_info=context.error)
+# معالج الرسائل
+async def message_handler(update: Update, context):
+    if "step" not in context.user_data:
+        return
+    step = context.user_data["step"]
+    if step == "enter_group_id":
+        group_id = update.message.text
+        context.user_data["group_id"] = group_id
+        await update.message.reply_text("أدخل TOTP_SECRET:")
+        context.user_data["step"] = "enter_totp_secret"
+    elif step == "enter_totp_secret":
+        totp_secret = update.message.text
+        group_id = context.user_data["group_id"]
+        cursor.execute("INSERT OR REPLACE INTO groups (group_id, totp_secret, update_interval, message_format, max_clicks, is_active) VALUES (?, ?, ?, ?, ?, ?)", 
+                       (group_id, totp_secret, 10, "UTC", 5, 1))  # افتراضي: 10 دقائق، UTC، 5 ضغطات، نشط
+        conn.commit()
+        await update.message.reply_text(f"تم إضافة المجموعة {group_id} بنجاح.")
+        threading.Thread(target=schedule_code_sending, args=(context.application, group_id, totp_secret, 10, "UTC")).start()
+        del context.user_data["step"]
+    elif step == "enter_interval":
+        interval = int(update.message.text)
+        group_id = context.user_data["selected_group"]
+        cursor.execute("UPDATE groups SET update_interval = ? WHERE group_id = ?", (interval, group_id))
+        conn.commit()
+        await update.message.reply_text(f"تم تعيين فترة التحديث إلى {interval} دقيقة للمجموعة {group_id}")
+        del context.user_data["step"]
 
+# الدالة الرئيسية
 def main():
-    updater = Updater(TOKEN, use_context=True)
-    dp = updater.dispatcher
+    application = Application.builder().token(TOKEN).build()
+    application.add_handler(CommandHandler("admin", admin_command))
+    application.add_handler(CallbackQueryHandler(button_handler))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
     
-    # Commands
-    dp.add_handler(CommandHandler("start", start))
-    dp.add_handler(CommandHandler("admin", admin_menu))
+    # بدء جدولة الإرسال للمجموعات الموجودة مسبقًا
+    cursor.execute("SELECT group_id, totp_secret, update_interval, message_format FROM groups WHERE is_active = 1")
+    groups = cursor.fetchall()
+    for group in groups:
+        threading.Thread(target=schedule_code_sending, args=(application, group[0], group[1], group[2], group[3])).start()
     
-    # Callbacks
-    dp.add_handler(CallbackQueryHandler(handle_admin_callback))
-    
-    # Messages
-    dp.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_admin_input))
-    
-    # Error handling
-    dp.add_error_handler(error_handler)
-    
-    # Restore scheduled jobs
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("SELECT group_id, interval FROM groups WHERE is_active=1")
-    active_groups = c.fetchall()
-    conn.close()
-    
-    for group_id, interval in active_groups:
-        updater.job_queue.run_repeating(
-            send_2fa_message,
-            interval=interval*60,
-            first=10,
-            context={'group_id': group_id},
-            name=group_id
-        )
-    
-    updater.start_polling()
-    updater.idle()
+    application.run_polling()
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
