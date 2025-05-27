@@ -28,6 +28,7 @@ from utils import (
     is_valid_group_id,
     is_midnight
 )
+from user_attempts import add_manage_attempts_handlers
 
 # إعداد التسجيل
 logging.basicConfig(
@@ -56,28 +57,34 @@ def send_2fa_code(group_id):
             logger.warning(f"المجموعة {group_id} غير نشطة أو لا تحتوي على سر TOTP")
             return False
         
-        # توليد رمز TOTP
-        totp_code = generate_totp(group_data["totp_secret"])
-        if not totp_code:
-            logger.error(f"فشل في توليد رمز TOTP للمجموعة {group_id}")
-            return False
+        # لا نقوم بتوليد الرمز هنا، سيتم توليده في الوقت الفعلي عند الضغط على الزر
         
         # إنشاء لوحة المفاتيح مع زر النسخ
         markup = types.InlineKeyboardMarkup()
         copy_button = types.InlineKeyboardButton(
             text=MESSAGE_TEMPLATES["copy_button"],
-            callback_data=f"copy_{group_id}_{totp_code}"
+            callback_data=f"copy_{group_id}_realtime"  # استخدام علامة realtime بدلاً من الرمز الثابت
         )
         markup.add(copy_button)
         
-        # تحضير نص الرسالة
-        next_time = get_next_update_time(
-            group_data["interval"],
-            group_data["timezone"],
-            group_data["time_format"]
-        )
+        # حساب وقت التحديث القادم بالنسبة للوقت الحالي
+        current_time = datetime.now(pytz.timezone(group_data.get("timezone", "UTC")))
+        interval_minutes = group_data.get("interval", 10)
+        next_update = current_time + timedelta(minutes=interval_minutes)
         
-        message_text = f"{MESSAGE_TEMPLATES['header']}\n\n{MESSAGE_TEMPLATES['footer'].format(next_time=next_time)}"
+        # تنسيق الوقت حسب الصيغة المطلوبة
+        if group_data.get("time_format", "12") == "12":
+            current_time_str = current_time.strftime("%I:%M:%S %p")
+            next_time_str = next_update.strftime("%I:%M:%S %p")
+        else:
+            current_time_str = current_time.strftime("%H:%M:%S")
+            next_time_str = next_update.strftime("%H:%M:%S")
+        
+        # تحضير نص الرسالة مع توضيح الوقت الحالي والوقت القادم بشكل واضح
+        message_text = f"{MESSAGE_TEMPLATES['header']}\n\n"
+        message_text += f"Current time: {current_time_str}\n"
+        message_text += f"Next code in: {interval_minutes} minutes\n"
+        message_text += f"Next code at: {next_time_str}"
         
         # إرسال الرسالة
         bot.send_message(group_id, message_text, reply_markup=markup)
@@ -566,14 +573,19 @@ def handle_user_details(call):
     for group_id, remaining in attempts.items():
         message_text += f"المجموعة {group_id}: {remaining} محاولات\n"
     
-    markup = types.InlineKeyboardMarkup(row_width=1)
+    markup = types.InlineKeyboardMarkup(row_width=2)
     
     btn_reset = types.InlineKeyboardButton(
         "إعادة تعيين محاولات المستخدم",
         callback_data=f"reset_user_{user_id}"
     )
     
-    markup.add(btn_reset)
+    btn_manage_attempts = types.InlineKeyboardButton(
+        "إدارة عدد المحاولات",
+        callback_data=f"manage_attempts_{user_id}"
+    )
+    
+    markup.add(btn_reset, btn_manage_attempts)
     
     bot.send_message(
         call.message.chat.id,
@@ -671,24 +683,47 @@ def handle_reset_all_attempts(call):
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('copy_'))
 def handle_copy_code(call):
-    """معالجة نسخ رمز المصادقة"""
+    """معالجة نسخ رمز المصادقة في الوقت الفعلي"""
     parts = call.data.split('_', 3)
-    if len(parts) != 3:
+    if len(parts) < 3:
         bot.answer_callback_query(call.id, "خطأ في البيانات")
         return
     
     group_id = parts[1]
-    totp_code = parts[2]
-    
     user_id = call.from_user.id
+    
+    # التحقق من عدد المحاولات المتبقية قبل التحديث
+    current_attempts = db.get_user_attempts(user_id, group_id)
+    
+    if current_attempts <= 0:
+        # لا توجد محاولات متبقية
+        bot.answer_callback_query(
+            call.id,
+            text=f"لقد استنفذت جميع محاولاتك اليومية. يرجى الانتظار حتى منتصف الليل لإعادة تعيين المحاولات.",
+            show_alert=True
+        )
+        return
+    
+    # الحصول على بيانات المجموعة
+    group_data = db.get_group(group_id)
+    if not group_data or not group_data.get("totp_secret"):
+        bot.answer_callback_query(call.id, "خطأ: لا يمكن الوصول إلى بيانات المجموعة")
+        return
+    
+    # توليد رمز TOTP في الوقت الفعلي
+    totp_code = generate_totp(group_data["totp_secret"])
+    if not totp_code:
+        bot.answer_callback_query(call.id, "خطأ في توليد رمز المصادقة")
+        return
     
     # تحديث عدد المحاولات
     remaining = db.update_user_attempts(user_id, group_id)
     
-    # إرسال الرمز للمستخدم
+    # إرسال الرمز للمستخدم مع إمكانية النسخ
+    # استخدام تنسيق خاص لتسهيل النسخ
     bot.answer_callback_query(
         call.id,
-        text=f"الرمز: {totp_code}\n{MESSAGE_TEMPLATES['attempts_left'].format(attempts=remaining)}",
+        text=f"الرمز: {totp_code}\n\nيمكنك نسخ الرمز من هنا: {totp_code}\n\n{MESSAGE_TEMPLATES['attempts_left'].format(attempts=remaining)}",
         show_alert=True
     )
 
@@ -696,6 +731,9 @@ def main():
     """الدالة الرئيسية"""
     try:
         logger.info("بدء تشغيل البوت...")
+        
+        # إضافة معالجات إدارة عدد المحاولات
+        add_manage_attempts_handlers(bot, db)
         
         # بدء خيط المجدول
         scheduler_thread_obj = threading.Thread(target=scheduler_thread)
