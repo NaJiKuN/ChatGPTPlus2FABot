@@ -834,28 +834,19 @@ def handle_copy_code(call):
     # تحديث عدد المحاولات
     remaining = db.update_user_attempts(user_id, group_id)
     
-    # إنشاء لوحة مفاتيح مع زر النسخ
-    markup = types.InlineKeyboardMarkup()
-    copy_button = types.InlineKeyboardButton(
-        text="نسخ الرمز",
-        callback_data=f"copy_code_{totp_code}"
-    )
-    markup.add(copy_button)
-    
     # إرسال إشعار بسيط
     bot.answer_callback_query(
         call.id,
         text="تم توليد رمز المصادقة. سيتم إرساله إليك في رسالة خاصة."
     )
     
-    # إرسال الرمز في رسالة خاصة للمستخدم ليكون قابلاً للنسخ
+    # إرسال الرمز في رسالة خاصة بدون لوحة مفاتيح ليكون قابلًا للنسخ
     try:
         # إرسال الرمز في رسالة خاصة بتنسيق محسن
         bot.send_message(
             user_id,
             f"🔐 رمز المصادقة 2FA\n\n{totp_code}\n\n⚠️ صالح لمدة 30 ثانية فقط!\n\nعدد المحاولات المتبقية: {remaining}",
-            parse_mode=None,  # استخدام نص عادي لتسهيل النسخ
-            reply_markup=markup
+            parse_mode=None  # استخدام نص عادي لتسهيل النسخ
         )
     except Exception as e:
         # في حالة فشل إرسال الرسالة الخاصة (مثلاً إذا لم يبدأ المستخدم محادثة مع البوت)
@@ -868,7 +859,7 @@ def handle_copy_code(call):
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('copy_code_'))
 def handle_copy_code_button(call):
-    """معالجة زر نسخ الرمز"""
+    """معالجة زر نسخ الرمز (لن يُستخدم بعد الآن بسبب إزالة الزر)"""
     parts = call.data.split('_', 2)
     if len(parts) != 3:
         bot.answer_callback_query(call.id, "خطأ في البيانات")
