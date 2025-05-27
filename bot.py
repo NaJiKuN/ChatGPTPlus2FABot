@@ -595,6 +595,118 @@ def handle_user_details(call):
     
     bot.answer_callback_query(call.id)
 
+@bot.callback_query_handler(func=lambda call: call.data.startswith('manage_attempts_'))
+def handle_manage_attempts(call):
+    """معالجة إدارة عدد المحاولات"""
+    parts = call.data.split('_', 2)
+    if len(parts) != 3:
+        bot.answer_callback_query(call.id, "خطأ في البيانات")
+        return
+    
+    user_id = parts[2]
+    user_data = db.get_all_users().get(user_id, {})
+    attempts = user_data.get("attempts", {})
+    
+    if not attempts:
+        bot.send_message(call.message.chat.id, "لا توجد محاولات لهذا المستخدم")
+        return
+    
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    
+    for group_id, remaining in attempts.items():
+        btn_text = f"المجموعة {group_id}: {remaining} محاولات"
+        callback_data = f"select_group_attempts_{user_id}_{group_id}"
+        markup.add(types.InlineKeyboardButton(btn_text, callback_data=callback_data))
+    
+    bot.send_message(
+        call.message.chat.id,
+        f"اختر المجموعة لإدارة محاولات المستخدم {user_id}:",
+        reply_markup=markup
+    )
+    
+    bot.answer_callback_query(call.id)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('select_group_attempts_'))
+def handle_select_group_attempts(call):
+    """معالجة اختيار المجموعة لإدارة المحاولات"""
+    parts = call.data.split('_', 3)
+    if len(parts) != 4:
+        bot.answer_callback_query(call.id, "خطأ في البيانات")
+        return
+    
+    user_id = parts[2]
+    group_id = parts[3]
+    
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    
+    btn_increase = types.InlineKeyboardButton(
+        "زيادة المحاولات",
+        callback_data=f"increase_attempts_{user_id}_{group_id}"
+    )
+    
+    btn_decrease = types.InlineKeyboardButton(
+        "نقصان المحاولات",
+        callback_data=f"decrease_attempts_{user_id}_{group_id}"
+    )
+    
+    markup.add(btn_increase, btn_decrease)
+    
+    bot.send_message(
+        call.message.chat.id,
+        f"اختر الإجراء لإدارة محاولات المستخدم {user_id} في المجموعة {group_id}:",
+        reply_markup=markup
+    )
+    
+    bot.answer_callback_query(call.id)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('increase_attempts_') or call.data.startswith('decrease_attempts_'))
+def handle_adjust_attempts(call):
+    """معالجة طلب زيادة أو نقصان المحاولات"""
+    parts = call.data.split('_', 3)
+    if len(parts) != 4:
+        bot.answer_callback_query(call.id, "خطأ في البيانات")
+        return
+    
+    action = parts[0]  # increase_attempts or decrease_attempts
+    user_id = parts[2]
+    group_id = parts[3]
+    
+    # طلب إدخال عدد المحاولات
+    msg = bot.send_message(
+        call.message.chat.id,
+        f"أدخل عدد المحاولات الجديد للمستخدم {user_id} في المجموعة {group_id} (عدد صحيح غير سالب):"
+    )
+    
+    bot.register_next_step_handler(msg, process_attempts_input, user_id=user_id, group_id=group_id, action=action)
+    
+    bot.answer_callback_query(call.id)
+
+def process_attempts_input(message, user_id, group_id, action):
+    """معالجة إدخال عدد المحاولات"""
+    try:
+        new_attempts = int(message.text.strip())
+        if new_attempts < 0:
+            bot.send_message(
+                message.chat.id,
+                MESSAGE_TEMPLATES["error"].format(error="عدد المحاولات يجب أن يكون غير سالب")
+            )
+            return
+        
+        # تحديث عدد المحاولات
+        db.set_user_attempts(user_id, group_id, new_attempts)
+        
+        action_text = "زيادة" if action == "increase_attempts" else "نقصان"
+        bot.send_message(
+            message.chat.id,
+            f"تم {action_text} محاولات المستخدم {user_id} في المجموعة {group_id} إلى {new_attempts} بنجاح"
+        )
+    
+    except ValueError:
+        bot.send_message(
+            message.chat.id,
+            MESSAGE_TEMPLATES["error"].format(error="يرجى إدخال عدد صحيح صالح")
+        )
+
 @bot.callback_query_handler(func=lambda call: call.data.startswith('reset_user_'))
 def handle_reset_user(call):
     """معالجة إعادة تعيين محاولات المستخدم"""
@@ -719,6 +831,14 @@ def handle_copy_code(call):
     # تحديث عدد المحاولات
     remaining = db.update_user_attempts(user_id, group_id)
     
+    # إنشاء لوحة مفاتيح مع زر النسخ
+    markup = types.InlineKeyboardMarkup()
+    copy_button = types.InlineKeyboardButton(
+        text="نسخ الرمز",
+        callback_data=f"copy_code_{totp_code}"
+    )
+    markup.add(copy_button)
+    
     # إرسال إشعار بسيط
     bot.answer_callback_query(
         call.id,
@@ -731,7 +851,8 @@ def handle_copy_code(call):
         bot.send_message(
             user_id,
             f"🔐 رمز المصادقة 2FA\n\n{totp_code}\n\n⚠️ صالح لمدة 30 ثانية فقط!\n\nعدد المحاولات المتبقية: {remaining}",
-            parse_mode=None  # استخدام نص عادي لتسهيل النسخ
+            parse_mode=None,  # استخدام نص عادي لتسهيل النسخ
+            reply_markup=markup
         )
     except Exception as e:
         # في حالة فشل إرسال الرسالة الخاصة (مثلاً إذا لم يبدأ المستخدم محادثة مع البوت)
@@ -741,6 +862,21 @@ def handle_copy_code(call):
             text=f"الرمز: {totp_code}\nيرجى بدء محادثة مع البوت للحصول على رسائل خاصة.",
             show_alert=True
         )
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('copy_code_'))
+def handle_copy_code_button(call):
+    """معالجة زر نسخ الرمز"""
+    parts = call.data.split('_', 2)
+    if len(parts) != 3:
+        bot.answer_callback_query(call.id, "خطأ في البيانات")
+        return
+    
+    totp_code = parts[2]
+    bot.answer_callback_query(
+        call.id,
+        text=f"تم نسخ الرمز: {totp_code}",
+        show_alert=True
+    )
 
 def main():
     """الدالة الرئيسية"""
