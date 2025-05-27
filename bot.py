@@ -617,6 +617,7 @@ def handle_manage_attempts(call):
         btn_text = f"المجموعة {group_id}: {remaining} محاولات"
         callback_data = f"select_group_attempts_{user_id}_{group_id}"
         markup.add(types.InlineKeyboardButton(btn_text, callback_data=callback_data))
+        logger.info(f"تم إنشاء زر للمجموعة {group_id} مع callback_data: {callback_data}")
     
     bot.send_message(
         call.message.chat.id,
@@ -629,9 +630,12 @@ def handle_manage_attempts(call):
 @bot.callback_query_handler(func=lambda call: call.data.startswith('select_group_attempts_'))
 def handle_select_group_attempts(call):
     """معالجة اختيار المجموعة لإدارة المحاولات"""
+    logger.info(f"تم استدعاء handle_select_group_attempts مع callback_data: {call.data}")
+    
     # تقسيم callback_data مع مراعاة أن group_id قد يحتوي على علامة سالبة
     parts = call.data.split('_')
     if len(parts) < 4:
+        logger.error(f"خطأ في تقسيم callback_data: {call.data}")
         bot.answer_callback_query(call.id, "خطأ في البيانات")
         return
     
@@ -639,6 +643,8 @@ def handle_select_group_attempts(call):
     user_id = parts[3]
     # إعادة بناء group_id (قد يحتوي على علامة سالبة)
     group_id = '_'.join(parts[4:])  # نأخذ كل الأجزاء المتبقية كـ group_id
+    
+    logger.info(f"تم استخراج user_id: {user_id}, group_id: {group_id}")
     
     markup = types.InlineKeyboardMarkup(row_width=2)
     
