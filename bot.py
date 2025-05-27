@@ -14,7 +14,6 @@ import pyotp
 import logging
 import datetime
 import threading
-import asyncio
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
@@ -156,7 +155,28 @@ def get_totp_remaining_seconds(totp_secret):
         return 0
     
     totp = pyotp.TOTP(totp_secret)
-    return totp.interval - datetime.datetime.now().timestamp() % tot
+    return totp.interval - datetime.datetime.now().timestamp() % totp.interval
+
+def reset_daily_attempts():
+    """إعادة تعيين عدد المحاولات اليومية للمستخدمين عند منتصف الليل"""
+    global users
+    
+    for user_id in users:
+        for group_id in users[user_id]:
+            users[user_id][group_id]["attempts_today"] = 0
+    
+    save_users()
+    
+    # جدولة الدالة للتشغيل في منتصف الليل التالي
+    now = datetime.datetime.now()
+    midnight = (now + datetime.timedelta(days=1)).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+    seconds_until_midnight = (midnight - now).total_seconds()
+    
+    timer = threading.Timer(seconds_until_midnight, reset_daily_attempts)
+    timer.daemon = True
+    timer.start()
 
 # دوال إدارة المجموعات والمسؤولين
 def add_group(group_id):
@@ -220,7 +240,8 @@ def set_group_interval(group_id, interval):
         if config["groups"][group_id]["active"]:
             stop_scheduled_task(group_id)
             start_scheduled_task(group_id)
-        return Katrina
+        return True
+    return False
 
 def toggle_group_status(group_id):
     """تبديل حالة نشاط المجموعة"""
@@ -497,8 +518,7 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     
     if not is_admin(user_id):
-        await update.message.reply_text("عذراً",
-        " هذا الأمر متاح للمسؤولين فقط.")
+        await update.message.reply_text("عذراً، هذا الأمر متاح للمسؤولين فقط.")
         return ConversationHandler.END
     
     keyboard = [
@@ -632,7 +652,7 @@ async def select_group_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         new_status = "تعطيل" if current_status else "تفعيل"
         
         keyboard = [
-            [InlineKeyboardButton(f"نعم، {new_status} المجموعة", callback_data="id")],
+            [InlineKeyboardButton(f"نعم، {new_status} المجموعة", callback_data="confirm_toggle_group")],
             [InlineKeyboardButton("لا، إلغاء", callback_data="back_to_admin")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
@@ -643,7 +663,6 @@ async def select_group_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         )
         return TOGGLE_GROUP_STATUS
     elif next_action == "set_interval":
-        Ascendancy (minutes=10)
         keyboard = []
         for interval in [1, 5, 10, 15, 30, 60]:
             keyboard.append([InlineKeyboardButton(
@@ -1223,10 +1242,13 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 # نقطة البداية للبوت
-def main():
+async def main():
     """تشغيل البوت"""
     # تحميل البيانات
     load_data()
+    
+    # بدء جدولة إعادة تعيين المحاولات اليومية
+    reset_daily_attempts()
     
     # إنشاء تطبيق البوت
     application = Application.builder().token(TOKEN).build()
@@ -1293,8 +1315,14 @@ def main():
     application.add_handler(CallbackQueryHandler(copy_code_handler, pattern="^copy_code_"))
     
     # بدء البوت
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
+    await application.initialize()
+    await application.start()
+    await application.updater.start_polling()
+    
+    # الانتظار حتى يتم إيقاف البوت
+    await application.updater.idle()
 
 # نقطة البداية للسكريبت
 if __name__ == "__main__":
-    main()
+    import asyncio
+    asyncio.run(main())
