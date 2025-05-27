@@ -2,909 +2,1327 @@
 # -*- coding: utf-8 -*-
 
 """
-بوت تليجرام للمصادقة 2FA
-يقوم بإرسال رمز مصادقة 2FA من خلال الـTOTP_SECRET
+بوت تليجرام لإرسال رموز المصادقة 2FA
+يقوم بإرسال رمز مصادقة 2FA من خلال الـTOTP_SECRET كل 10 دقائق افتراضياً
+أو وقت يحدد من قبل المسؤول الى مجموعة خاصة
 """
 
 import os
-import sys
+import json
 import time
-import logging
-import threading
-import schedule
-from datetime import datetime, timedelta
-import pytz
-import telebot
-from telebot import types
 import pyotp
-
-# استيراد الوحدات المحلية
-from config import get_token, MESSAGE_TEMPLATES
-from database import Database
-from utils import (
-    generate_totp, 
-    get_next_update_time, 
-    is_valid_totp_secret, 
-    is_valid_group_id,
-    is_midnight
+import logging
+import datetime
+import threading
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    CallbackQueryHandler,
+    ContextTypes,
+    ConversationHandler,
+    MessageHandler,
+    filters
 )
-from user_attempts import add_manage_attempts_handlers
 
-# إعداد التسجيل
+# تكوين نظام التسجيل
 logging.basicConfig(
-    level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(sys.stdout),
-        logging.FileHandler('bot.log')
-    ]
+    level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-# تهيئة البوت وقاعدة البيانات
-TOKEN = get_token()
-bot = telebot.TeleBot(TOKEN)
-db = Database()
+# المتغيرات الأساسية
+TOKEN = "8119053401:AAHuqgTkiq6M8rT9VSHYEnIl96BHt9lXIZM"
+DEFAULT_ADMIN_ID = "764559466"
+DEFAULT_GROUP_ID = "-1002329495586"
 
-# قاموس لتخزين المهام النشطة
-active_tasks = {}
+# حالات المحادثة
+(
+    ADMIN_MENU,
+    ADD_GROUP,
+    ADD_TOTP,
+    SET_INTERVAL,
+    CUSTOMIZE_MESSAGE,
+    SET_ATTEMPTS,
+    SELECT_GROUP,
+    SELECT_TIMEZONE,
+    SELECT_TIME_FORMAT,
+    ADD_ADMIN,
+    REMOVE_ADMIN,
+    REMOVE_GROUP,
+    TOGGLE_GROUP_STATUS,
+    WAITING_FOR_MANUAL_SEND,
+    TOGGLE_MESSAGE_OPTIONS,
+) = range(15)
 
-def send_2fa_code(group_id):
-    """إرسال رمز المصادقة 2FA إلى المجموعة"""
-    try:
-        group_data = db.get_group(group_id)
-        if not group_data or not group_data.get("active") or not group_data.get("totp_secret"):
-            logger.warning(f"المجموعة {group_id} غير نشطة أو لا تحتوي على سر TOTP")
-            return False
-        
-        # لا نقوم بتوليد الرمز هنا، سيتم توليده في الوقت الفعلي عند الضغط على الزر
-        
-        # إنشاء لوحة المفاتيح مع زر النسخ
-        markup = types.InlineKeyboardMarkup()
-        copy_button = types.InlineKeyboardButton(
-            text=MESSAGE_TEMPLATES["copy_button"],
-            callback_data=f"copy_{group_id}_realtime"  # استخدام علامة realtime بدلاً من الرمز الثابت
-        )
-        markup.add(copy_button)
-        
-        # حساب وقت التحديث القادم بالنسبة للوقت الحالي
-        current_time = datetime.now(pytz.timezone(group_data.get("timezone", "UTC")))
-        interval_minutes = group_data.get("interval", 10)
-        next_update = current_time + timedelta(minutes=interval_minutes)
-        
-        # تنسيق الوقت حسب الصيغة المطلوبة
-        if group_data.get("time_format", "12") == "12":
-            current_time_str = current_time.strftime("%I:%M:%S %p")
-            next_time_str = next_update.strftime("%I:%M:%S %p")
-        else:
-            current_time_str = current_time.strftime("%H:%M:%S")
-            next_time_str = next_update.strftime("%H:%M:%S")
-        
-        # تحضير نص الرسالة مع توضيح الوقت الحالي والوقت القادم بشكل واضح
-        message_text = f"{MESSAGE_TEMPLATES['header']}\n\n"
-        message_text += f"Current time: {current_time_str}\n"
-        message_text += f"Next code in: {interval_minutes} minutes\n"
-        message_text += f"Next code at: {next_time_str}"
-        
-        # إرسال الرسالة
-        bot.send_message(group_id, message_text, reply_markup=markup)
-        
-        # تحديث وقت آخر إرسال
-        db.update_group(group_id, last_sent=datetime.now().timestamp())
-        
-        logger.info(f"تم إرسال رمز 2FA إلى المجموعة {group_id}")
-        return True
+# ملفات البيانات
+CONFIG_FILE = "config.json"
+USERS_FILE = "users.json"
+
+# القيم الافتراضية
+DEFAULT_CONFIG = {
+    "admins": [DEFAULT_ADMIN_ID],
+    "groups": {
+        DEFAULT_GROUP_ID: {
+            "totp_secret": "",
+            "interval": 10,  # بالدقائق
+            "active": False,
+            "timezone": "UTC",  # UTC أو Palestine
+            "time_format": 12,  # 12 أو 24
+            "message_format": {
+                "line1": "🔐 2FA Verification Code",
+                "line2": "",
+                "show_current_time": True,
+                "show_next_code_in": True,
+                "show_next_code_at": True
+            },
+            "max_attempts": 3  # عدد المحاولات المسموحة لكل مستخدم يومياً
+        }
+    }
+}
+
+DEFAULT_USERS = {}
+
+# متغيرات عالمية لتخزين البيانات
+config = {}
+users = {}
+active_tasks = {}  # لتخزين مهام الجدولة النشطة
+
+# دوال مساعدة للتعامل مع الملفات
+def load_data():
+    """تحميل البيانات من الملفات"""
+    global config, users
     
-    except Exception as e:
-        logger.error(f"خطأ في إرسال رمز 2FA إلى المجموعة {group_id}: {e}")
-        return False
-
-def schedule_2fa_task(group_id):
-    """جدولة مهمة إرسال رمز 2FA بشكل دوري"""
-    try:
-        # إلغاء المهمة السابقة إذا كانت موجودة
-        if group_id in active_tasks:
-            schedule.cancel_job(active_tasks[group_id])
-        
-        group_data = db.get_group(group_id)
-        if not group_data or not group_data.get("active"):
-            logger.warning(f"المجموعة {group_id} غير نشطة")
-            return False
-        
-        # إرسال رمز فوري
-        send_2fa_code(group_id)
-        
-        # جدولة المهمة الدورية
-        interval = group_data.get("interval", 10)  # الفترة الافتراضية 10 دقائق
-        
-        # إنشاء مهمة جديدة
-        job = schedule.every(interval).minutes.do(send_2fa_code, group_id=group_id)
-        active_tasks[group_id] = job
-        
-        logger.info(f"تمت جدولة مهمة إرسال رمز 2FA للمجموعة {group_id} كل {interval} دقائق")
-        return True
+    # تحميل ملف الإعدادات
+    if os.path.exists(CONFIG_FILE):
+        with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
+            config = json.load(f)
+    else:
+        config = DEFAULT_CONFIG
+        save_config()
     
-    except Exception as e:
-        logger.error(f"خطأ في جدولة مهمة إرسال رمز 2FA للمجموعة {group_id}: {e}")
-        return False
+    # تحميل ملف المستخدمين
+    if os.path.exists(USERS_FILE):
+        with open(USERS_FILE, 'r', encoding='utf-8') as f:
+            users = json.load(f)
+    else:
+        users = DEFAULT_USERS
+        save_users()
 
-def stop_2fa_task(group_id):
-    """إيقاف مهمة إرسال رمز 2FA"""
-    try:
-        if group_id in active_tasks:
-            schedule.cancel_job(active_tasks[group_id])
-            del active_tasks[group_id]
-            logger.info(f"تم إيقاف مهمة إرسال رمز 2FA للمجموعة {group_id}")
-            return True
-        return False
-    except Exception as e:
-        logger.error(f"خطأ في إيقاف مهمة إرسال رمز 2FA للمجموعة {group_id}: {e}")
-        return False
+def save_config():
+    """حفظ الإعدادات في الملف"""
+    with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
+        json.dump(config, f, ensure_ascii=False, indent=4)
+
+def save_users():
+    """حفظ بيانات المستخدمين في الملف"""
+    with open(USERS_FILE, 'w', encoding='utf-8') as f:
+        json.dump(users, f, ensure_ascii=False, indent=4)
+
+def is_admin(user_id):
+    """التحقق مما إذا كان المستخدم مسؤولاً"""
+    return str(user_id) in config.get("admins", [DEFAULT_ADMIN_ID])
+
+def get_current_time(timezone="UTC"):
+    """الحصول على الوقت الحالي بناءً على المنطقة الزمنية"""
+    now = datetime.datetime.now(datetime.timezone.utc)
+    
+    if timezone == "Palestine":
+        # توقيت فلسطين (UTC+3)
+        now = now + datetime.timedelta(hours=3)
+    
+    return now
+
+def format_time(dt, time_format=12):
+    """تنسيق الوقت بناءً على تفضيلات المستخدم"""
+    if time_format == 12:
+        return dt.strftime("%I:%M:%S %p")  # 12-hour format with AM/PM
+    else:
+        return dt.strftime("%H:%M:%S")  # 24-hour format
+
+def generate_totp_code(totp_secret):
+    """توليد رمز TOTP باستخدام السر المقدم"""
+    if not totp_secret:
+        return "لم يتم تكوين TOTP_SECRET"
+    
+    totp = pyotp.TOTP(totp_secret)
+    return totp.now()
+
+def get_totp_remaining_seconds(totp_secret):
+    """الحصول على عدد الثواني المتبقية لصلاحية الرمز الحالي"""
+    if not totp_secret:
+        return 0
+    
+    totp = pyotp.TOTP(totp_secret)
+    return totp.interval - datetime.datetime.now().timestamp() % totp.interval
 
 def reset_daily_attempts():
-    """إعادة تعيين محاولات المستخدمين اليومية"""
-    db.reset_daily_attempts()
-    logger.info("تم إعادة تعيين محاولات المستخدمين اليومية")
-
-def check_midnight():
-    """التحقق من منتصف الليل لإعادة تعيين المحاولات"""
-    for timezone_str in set(group["timezone"] for group in db.get_all_groups().values()):
-        if is_midnight(timezone_str):
-            reset_daily_attempts()
-            break
-
-def scheduler_thread():
-    """دالة تشغيل المجدول في خيط منفصل"""
-    while True:
-        schedule.run_pending()
-        check_midnight()
-        time.sleep(1)
-
-# معالجات الأوامر والأزرار
-
-@bot.message_handler(commands=['start'])
-def handle_start(message):
-    """معالجة أمر البداية"""
-    bot.send_message(message.chat.id, MESSAGE_TEMPLATES["welcome"])
-
-@bot.message_handler(commands=['admin'])
-def handle_admin(message):
-    """معالجة أمر المسؤول"""
-    if not db.is_admin(message.from_user.id):
-        bot.send_message(message.chat.id, MESSAGE_TEMPLATES["no_permission"])
-        return
+    """إعادة تعيين عدد المحاولات اليومية للمستخدمين عند منتصف الليل"""
+    global users
     
-    # إنشاء لوحة المفاتيح للمسؤول
-    markup = types.InlineKeyboardMarkup(row_width=1)
+    for user_id in users:
+        for group_id in users[user_id]:
+            users[user_id][group_id]["attempts_today"] = 0
     
-    btn_add_group = types.InlineKeyboardButton(
-        "إضافة/تعديل مجموعة وإعداد TOTP_SECRET",
-        callback_data="admin_add_group"
+    save_users()
+    
+    # جدولة الدالة للتشغيل في منتصف الليل التالي
+    now = datetime.datetime.now()
+    midnight = (now + datetime.timedelta(days=1)).replace(
+        hour=0, minute=0, second=0, microsecond=0
     )
+    seconds_until_midnight = (midnight - now).total_seconds()
     
-    btn_set_interval = types.InlineKeyboardButton(
-        "تعديل فترة إرسال الرموز",
-        callback_data="admin_set_interval"
-    )
-    
-    btn_message_format = types.InlineKeyboardButton(
-        "تخصيص شكل رسالة الرمز",
-        callback_data="admin_message_format"
-    )
-    
-    btn_user_attempts = types.InlineKeyboardButton(
-        "إدارة محاولات المستخدمين",
-        callback_data="admin_user_attempts"
-    )
-    
-    markup.add(btn_add_group, btn_set_interval, btn_message_format, btn_user_attempts)
-    
-    bot.send_message(
-        message.chat.id,
-        MESSAGE_TEMPLATES["admin_welcome"],
-        reply_markup=markup
-    )
+    timer = threading.Timer(seconds_until_midnight, reset_daily_attempts)
+    timer.daemon = True
+    timer.start()
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith('admin_'))
-def handle_admin_callback(call):
-    """معالجة استدعاءات المسؤول"""
-    if not db.is_admin(call.from_user.id):
-        bot.answer_callback_query(call.id, MESSAGE_TEMPLATES["no_permission"])
-        return
+# دوال إدارة المجموعات والمسؤولين
+def add_group(group_id):
+    """إضافة مجموعة جديدة إلى الإعدادات"""
+    if group_id not in config["groups"]:
+        config["groups"][group_id] = {
+            "totp_secret": "",
+            "interval": 10,
+            "active": False,
+            "timezone": "UTC",
+            "time_format": 12,
+            "message_format": {
+                "line1": "🔐 2FA Verification Code",
+                "line2": "",
+                "show_current_time": True,
+                "show_next_code_in": True,
+                "show_next_code_at": True
+            },
+            "max_attempts": 3
+        }
+        save_config()
+        return True
+    return False
+
+def remove_group(group_id):
+    """حذف مجموعة من الإعدادات"""
+    if group_id in config["groups"]:
+        # إيقاف أي مهام جدولة مرتبطة بالمجموعة
+        stop_scheduled_task(group_id)
+        
+        # حذف المجموعة من الإعدادات
+        del config["groups"][group_id]
+        save_config()
+        
+        # حذف بيانات المستخدمين المرتبطة بالمجموعة
+        for user_id in list(users.keys()):
+            if group_id in users[user_id]:
+                del users[user_id][group_id]
+                # إذا لم يعد لدى المستخدم أي مجموعات، قم بحذفه
+                if not users[user_id]:
+                    del users[user_id]
+        save_users()
+        return True
+    return False
+
+def set_group_totp(group_id, totp_secret):
+    """تعيين سر TOTP للمجموعة"""
+    if group_id in config["groups"]:
+        config["groups"][group_id]["totp_secret"] = totp_secret
+        save_config()
+        return True
+    return False
+
+def set_group_interval(group_id, interval):
+    """تعيين الفاصل الزمني لإرسال الرموز للمجموعة"""
+    if group_id in config["groups"]:
+        config["groups"][group_id]["interval"] = interval
+        save_config()
+        
+        # إعادة جدولة المهمة إذا كانت المجموعة نشطة
+        if config["groups"][group_id]["active"]:
+            stop_scheduled_task(group_id)
+            start_scheduled_task(group_id)
+        return True
+    return False
+
+def toggle_group_status(group_id):
+    """تبديل حالة نشاط المجموعة"""
+    if group_id in config["groups"]:
+        current_status = config["groups"][group_id]["active"]
+        config["groups"][group_id]["active"] = not current_status
+        save_config()
+        
+        if config["groups"][group_id]["active"]:
+            # إذا تم تفعيل المجموعة، ابدأ المهمة المجدولة
+            start_scheduled_task(group_id)
+        else:
+            # إذا تم تعطيل المجموعة، أوقف المهمة المجدولة
+            stop_scheduled_task(group_id)
+        
+        return not current_status
+    return None
+
+def set_group_timezone(group_id, timezone):
+    """تعيين المنطقة الزمنية للمجموعة"""
+    if group_id in config["groups"] and timezone in ["UTC", "Palestine"]:
+        config["groups"][group_id]["timezone"] = timezone
+        save_config()
+        return True
+    return False
+
+def set_group_time_format(group_id, time_format):
+    """تعيين تنسيق الوقت للمجموعة"""
+    if group_id in config["groups"] and time_format in [12, 24]:
+        config["groups"][group_id]["time_format"] = time_format
+        save_config()
+        return True
+    return False
+
+def set_group_message_format(group_id, message_format):
+    """تعيين تنسيق الرسالة للمجموعة"""
+    if group_id in config["groups"]:
+        config["groups"][group_id]["message_format"] = message_format
+        save_config()
+        return True
+    return False
+
+def toggle_message_option(group_id, option):
+    """تبديل خيار عرض عنصر في الرسالة"""
+    if group_id in config["groups"] and option in ["show_current_time", "show_next_code_in", "show_next_code_at"]:
+        current_value = config["groups"][group_id]["message_format"][option]
+        config["groups"][group_id]["message_format"][option] = not current_value
+        save_config()
+        return not current_value
+    return None
+
+def set_group_max_attempts(group_id, max_attempts):
+    """تعيين الحد الأقصى لعدد المحاولات اليومية للمجموعة"""
+    if group_id in config["groups"]:
+        config["groups"][group_id]["max_attempts"] = max_attempts
+        save_config()
+        return True
+    return False
+
+def add_admin(admin_id):
+    """إضافة مسؤول جديد"""
+    if admin_id not in config["admins"]:
+        config["admins"].append(admin_id)
+        save_config()
+        return True
+    return False
+
+def remove_admin(admin_id):
+    """إزالة مسؤول"""
+    if admin_id in config["admins"] and len(config["admins"]) > 1:
+        config["admins"].remove(admin_id)
+        save_config()
+        return True
+    return False
+
+def get_user_attempts(user_id, group_id):
+    """الحصول على عدد محاولات المستخدم اليومية للمجموعة"""
+    user_id = str(user_id)
+    if user_id not in users:
+        users[user_id] = {}
     
-    if call.data == "admin_add_group":
-        # طلب معرف المجموعة
-        msg = bot.send_message(
-            call.message.chat.id,
-            MESSAGE_TEMPLATES["group_id_request"]
+    if group_id not in users[user_id]:
+        users[user_id][group_id] = {
+            "attempts_today": 0,
+            "total_attempts": 0
+        }
+        save_users()
+    
+    return users[user_id][group_id]["attempts_today"]
+
+def increment_user_attempts(user_id, group_id):
+    """زيادة عدد محاولات المستخدم اليومية للمجموعة"""
+    user_id = str(user_id)
+    if user_id not in users:
+        users[user_id] = {}
+    
+    if group_id not in users[user_id]:
+        users[user_id][group_id] = {
+            "attempts_today": 0,
+            "total_attempts": 0
+        }
+    
+    users[user_id][group_id]["attempts_today"] += 1
+    users[user_id][group_id]["total_attempts"] += 1
+    save_users()
+    
+    return users[user_id][group_id]["attempts_today"]
+
+# دوال إرسال رموز 2FA
+async def send_2fa_code(context: ContextTypes.DEFAULT_TYPE, group_id):
+    """إرسال رمز 2FA إلى المجموعة"""
+    if group_id not in config["groups"]:
+        logger.error(f"المجموعة {group_id} غير موجودة")
+        return False
+    
+    group_config = config["groups"][group_id]
+    totp_secret = group_config["totp_secret"]
+    
+    if not totp_secret:
+        logger.error(f"لم يتم تكوين TOTP_SECRET للمجموعة {group_id}")
+        return False
+    
+    # توليد رمز 2FA
+    code = generate_totp_code(totp_secret)
+    
+    # الحصول على الوقت الحالي والوقت التالي
+    timezone = group_config["timezone"]
+    time_format = group_config["time_format"]
+    interval = group_config["interval"]
+    
+    current_time = get_current_time(timezone)
+    next_time = current_time + datetime.timedelta(minutes=interval)
+    
+    formatted_current_time = format_time(current_time, time_format)
+    formatted_next_time = format_time(next_time, time_format)
+    
+    # إنشاء نص الرسالة
+    message_format = group_config["message_format"]
+    message_text = message_format["line1"] + "\n\n"
+    
+    if message_format["line2"]:
+        message_text += message_format["line2"] + "\n\n"
+    
+    if message_format["show_current_time"]:
+        message_text += f"Current time: {formatted_current_time}\n"
+    
+    if message_format["show_next_code_in"]:
+        message_text += f"Next code in: {interval} minutes\n"
+    
+    if message_format["show_next_code_at"]:
+        message_text += f"Next code at: {formatted_next_time}\n"
+    
+    # إنشاء زر Copy Code
+    keyboard = [[InlineKeyboardButton("Copy Code", callback_data=f"copy_code_{group_id}")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    # إرسال الرسالة إلى المجموعة
+    try:
+        await context.bot.send_message(
+            chat_id=group_id,
+            text=message_text,
+            reply_markup=reply_markup
         )
-        bot.register_next_step_handler(msg, process_group_id)
-    
-    elif call.data == "admin_set_interval":
-        # عرض قائمة المجموعات لاختيار واحدة
-        show_group_selection(call.message.chat.id, "interval")
-    
-    elif call.data == "admin_message_format":
-        # عرض قائمة المجموعات لاختيار واحدة
-        show_group_selection(call.message.chat.id, "format")
-    
-    elif call.data == "admin_user_attempts":
-        # عرض قائمة المستخدمين
-        show_users_list(call.message.chat.id)
-    
-    # إزالة علامة "جاري التحميل" من الزر
-    bot.answer_callback_query(call.id)
+        logger.info(f"تم إرسال رمز 2FA إلى المجموعة {group_id}")
+        return True
+    except Exception as e:
+        logger.error(f"فشل في إرسال رمز 2FA إلى المجموعة {group_id}: {str(e)}")
+        return False
 
-def process_group_id(message):
-    """معالجة إدخال معرف المجموعة"""
-    group_id = message.text.strip()
+async def copy_code_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالجة النقر على زر Copy Code"""
+    query = update.callback_query
+    await query.answer()
     
-    if not is_valid_group_id(group_id):
-        bot.send_message(
-            message.chat.id,
-            MESSAGE_TEMPLATES["error"].format(error="معرف المجموعة غير صالح")
+    # استخراج معرف المجموعة من البيانات
+    group_id = query.data.replace("copy_code_", "")
+    user_id = str(query.from_user.id)
+    
+    if group_id not in config["groups"]:
+        await query.message.reply_text("حدث خطأ: المجموعة غير موجودة.")
+        return
+    
+    group_config = config["groups"][group_id]
+    max_attempts = group_config["max_attempts"]
+    
+    # التحقق من عدد المحاولات المتبقية
+    current_attempts = get_user_attempts(user_id, group_id)
+    
+    if current_attempts >= max_attempts:
+        await context.bot.send_message(
+            chat_id=user_id,
+            text="⚠️ لقد استنفدت جميع محاولاتك اليومية. يرجى المحاولة غداً."
         )
         return
     
-    # تخزين معرف المجموعة مؤقتاً
-    user_id = message.from_user.id
-    user_data = {"group_id": group_id}
+    # زيادة عدد المحاولات
+    new_attempts = increment_user_attempts(user_id, group_id)
+    remaining_attempts = max_attempts - new_attempts
     
-    # طلب TOTP_SECRET
-    msg = bot.send_message(
-        message.chat.id,
-        MESSAGE_TEMPLATES["totp_secret_request"]
-    )
+    # توليد رمز 2FA
+    totp_secret = group_config["totp_secret"]
+    code = generate_totp_code(totp_secret)
     
-    # تخزين البيانات في الرسالة للاستخدام لاحقاً
-    bot.register_next_step_handler_by_chat_id(
-        message.chat.id,
-        process_totp_secret,
-        user_data=user_data
-    )
-
-def process_totp_secret(message, user_data):
-    """معالجة إدخال TOTP_SECRET"""
-    totp_secret = message.text.strip()
-    group_id = user_data["group_id"]
+    # حساب الوقت المتبقي لصلاحية الرمز
+    remaining_seconds = int(get_totp_remaining_seconds(totp_secret))
     
-    # التحقق من صحة TOTP_SECRET
-    if not is_valid_totp_secret(totp_secret):
-        bot.send_message(
-            message.chat.id,
-            MESSAGE_TEMPLATES["error"].format(error="TOTP_SECRET غير صالح")
+    # إرسال الرمز إلى المستخدم في رسالة خاصة
+    try:
+        await context.bot.send_message(
+            chat_id=user_id,
+            text=f"🔐 رمز المصادقة 2FA\n\n{code}\n\n⚠️ صالح لمدة {remaining_seconds} ثانية فقط!\nعدد المحاولات المتبقية: {remaining_attempts}"
         )
-        return
+        logger.info(f"تم إرسال رمز 2FA إلى المستخدم {user_id}")
+    except Exception as e:
+        logger.error(f"فشل في إرسال رمز 2FA إلى المستخدم {user_id}: {str(e)}")
+
+def start_scheduled_task(group_id):
+    """بدء مهمة مجدولة لإرسال رموز 2FA"""
+    # ملاحظة: هذه الوظيفة تستخدم فقط للإرسال اليدوي من قبل المسؤول
+    # نظراً لأن المهام المجدولة غير مدعومة حالياً
+    pass
+
+def stop_scheduled_task(group_id):
+    """إيقاف مهمة مجدولة لإرسال رموز 2FA"""
+    # ملاحظة: هذه الوظيفة تستخدم فقط للإرسال اليدوي من قبل المسؤول
+    # نظراً لأن المهام المجدولة غير مدعومة حالياً
+    pass
+
+async def manual_send_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """إرسال رمز 2FA يدوياً من قبل المسؤول"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+        
+        if query.data == "back_to_admin":
+            # العودة إلى قائمة المسؤول الرئيسية
+            return await admin_command(update, context)
+        
+        # استخراج معرف المجموعة من البيانات
+        group_id = query.data.replace("send_code_", "")
+        
+        # إرسال الرمز
+        success = await send_2fa_code(context, group_id)
+        
+        # إظهار رسالة تأكيد
+        if success:
+            await query.edit_message_text(
+                f"تم إرسال رمز 2FA إلى المجموعة {group_id} بنجاح."
+            )
+        else:
+            await query.edit_message_text(
+                f"فشل في إرسال رمز 2FA إلى المجموعة {group_id}. تأكد من أن البوت عضو في المجموعة ولديه صلاحيات الإرسال."
+            )
+        
+        # العودة إلى قائمة المسؤول بعد ثانيتين
+        await asyncio.sleep(2)
+        return await admin_command(update, context)
     
-    # إضافة أو تحديث المجموعة
-    group_exists = db.get_group(group_id) is not None
-    
-    if group_exists:
-        db.update_group(group_id, totp_secret=totp_secret, active=True)
-    else:
-        db.add_group(group_id, totp_secret=totp_secret)
-    
-    # إعادة جدولة المهمة
-    schedule_2fa_task(group_id)
-    
-    # إرسال رسالة نجاح
-    action = "تحديث" if group_exists else "إضافة"
-    bot.send_message(
-        message.chat.id,
-        f"تم {action} المجموعة بنجاح!\n"
-        f"معرف المجموعة: {group_id}\n"
-        f"تم تفعيل إرسال رموز 2FA"
+    # إذا وصلنا إلى هنا، فهناك خطأ ما
+    await update.message.reply_text("حدث خطأ. الرجاء المحاولة مرة أخرى.")
+    return ConversationHandler.END
+
+# دوال البوت الأساسية
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """التعامل مع أمر /start"""
+    user = update.effective_user
+    await update.message.reply_text(
+        f"مرحباً {user.first_name}! هذا بوت مصادقة 2FA.\n"
+        f"إذا كنت مسؤولاً، يمكنك استخدام الأمر /admin للوصول إلى لوحة التحكم."
     )
 
-def show_group_selection(chat_id, action_type):
-    """عرض قائمة المجموعات للاختيار"""
-    groups = db.get_all_groups()
+async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """التعامل مع أمر /admin"""
+    user_id = update.effective_user.id
     
-    if not groups:
-        bot.send_message(chat_id, "لا توجد مجموعات مضافة بعد")
-        return
+    if not is_admin(user_id):
+        await update.message.reply_text("عذراً، هذا الأمر متاح للمسؤولين فقط.")
+        return ConversationHandler.END
     
-    markup = types.InlineKeyboardMarkup(row_width=1)
-    
-    for group_id, group_data in groups.items():
-        if group_data.get("totp_secret"):  # عرض المجموعات التي لها TOTP_SECRET فقط
-            btn_text = f"المجموعة: {group_id}"
-            callback_data = f"select_group_{action_type}_{group_id}"
-            markup.add(types.InlineKeyboardButton(btn_text, callback_data=callback_data))
-    
-    bot.send_message(
-        chat_id,
-        "اختر المجموعة:",
-        reply_markup=markup
-    )
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith('select_group_'))
-def handle_group_selection(call):
-    """معالجة اختيار المجموعة"""
-    parts = call.data.split('_', 3)
-    if len(parts) != 4:
-        bot.answer_callback_query(call.id, "خطأ في البيانات")
-        return
-    
-    action_type = parts[2]
-    group_id = parts[3]
-    
-    if action_type == "interval":
-        show_interval_selection(call.message.chat.id, group_id)
-    elif action_type == "format":
-        show_format_options(call.message.chat.id, group_id)
-    
-    bot.answer_callback_query(call.id)
-
-def show_interval_selection(chat_id, group_id):
-    """عرض خيارات فترة الإرسال"""
-    markup = types.InlineKeyboardMarkup(row_width=3)
-    
-    intervals = [1, 5, 10, 15, 30, 60]
-    buttons = []
-    
-    for interval in intervals:
-        btn_text = f"{interval} دقيقة" if interval == 1 else f"{interval} دقائق"
-        callback_data = f"set_interval_{group_id}_{interval}"
-        buttons.append(types.InlineKeyboardButton(btn_text, callback_data=callback_data))
-    
-    # إضافة الأزرار في صفوف من 3
-    for i in range(0, len(buttons), 3):
-        row_buttons = buttons[i:i+3]
-        markup.row(*row_buttons)
-    
-    group_data = db.get_group(group_id)
-    current_interval = group_data.get("interval", 10)
-    
-    bot.send_message(
-        chat_id,
-        f"اختر فترة إرسال الرموز للمجموعة {group_id}\n"
-        f"الفترة الحالية: {current_interval} دقيقة",
-        reply_markup=markup
-    )
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith('set_interval_'))
-def handle_set_interval(call):
-    """معالجة تعيين فترة الإرسال"""
-    parts = call.data.split('_', 3)
-    if len(parts) != 4:
-        bot.answer_callback_query(call.id, "خطأ في البيانات")
-        return
-    
-    group_id = parts[2]
-    interval = int(parts[3])
-    
-    # تحديث فترة الإرسال
-    db.update_group(group_id, interval=interval)
-    
-    # إعادة جدولة المهمة
-    schedule_2fa_task(group_id)
-    
-    bot.send_message(
-        call.message.chat.id,
-        f"تم تعيين فترة إرسال الرموز للمجموعة {group_id} إلى {interval} دقيقة"
-    )
-    
-    bot.answer_callback_query(call.id)
-
-def show_format_options(chat_id, group_id):
-    """عرض خيارات تنسيق الرسالة"""
-    markup = types.InlineKeyboardMarkup(row_width=1)
-    
-    btn_timezone = types.InlineKeyboardButton(
-        "تغيير المنطقة الزمنية",
-        callback_data=f"format_timezone_{group_id}"
-    )
-    
-    btn_time_format = types.InlineKeyboardButton(
-        "تغيير صيغة الوقت (12/24 ساعة)",
-        callback_data=f"format_time_{group_id}"
-    )
-    
-    markup.add(btn_timezone, btn_time_format)
-    
-    group_data = db.get_group(group_id)
-    current_timezone = group_data.get("timezone", "Asia/Jerusalem")
-    current_time_format = group_data.get("time_format", "12")
-    
-    bot.send_message(
-        chat_id,
-        f"اختر إعدادات تنسيق الرسالة للمجموعة {group_id}\n"
-        f"المنطقة الزمنية الحالية: {current_timezone}\n"
-        f"صيغة الوقت الحالية: {current_time_format} ساعة",
-        reply_markup=markup
-    )
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith('format_timezone_'))
-def handle_format_timezone(call):
-    """معالجة تغيير المنطقة الزمنية"""
-    parts = call.data.split('_', 3)
-    if len(parts) != 3:
-        bot.answer_callback_query(call.id, "خطأ في البيانات")
-        return
-    
-    group_id = parts[2]
-    
-    markup = types.InlineKeyboardMarkup(row_width=1)
-    
-    timezones = [
-        ("توقيت فلسطين", "Asia/Jerusalem"),
-        ("التوقيت العالمي", "UTC")
+    keyboard = [
+        [InlineKeyboardButton("إضافة/تعديل مجموعة", callback_data="add_group")],
+        [InlineKeyboardButton("حذف مجموعة", callback_data="remove_group")],
+        [InlineKeyboardButton("تفعيل/تعطيل مجموعة", callback_data="toggle_group")],
+        [InlineKeyboardButton("تعيين فاصل زمني لإرسال الرموز", callback_data="set_interval")],
+        [InlineKeyboardButton("تخصيص شكل الرسالة", callback_data="customize_message")],
+        [InlineKeyboardButton("تعيين عدد المحاولات المسموحة", callback_data="set_attempts")],
+        [InlineKeyboardButton("إرسال رمز 2FA يدوياً", callback_data="manual_send")],
+        [InlineKeyboardButton("إضافة مسؤول", callback_data="add_admin")],
+        [InlineKeyboardButton("إزالة مسؤول", callback_data="remove_admin")],
+        [InlineKeyboardButton("إلغاء", callback_data="cancel")]
     ]
     
-    for name, tz in timezones:
-        markup.add(types.InlineKeyboardButton(
-            name,
-            callback_data=f"set_timezone_{group_id}_{tz}"
-        ))
-    
-    bot.send_message(
-        call.message.chat.id,
-        "اختر المنطقة الزمنية:",
-        reply_markup=markup
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text(
+        "مرحباً بك في لوحة تحكم المسؤول. الرجاء اختيار إحدى الخيارات:",
+        reply_markup=reply_markup
     )
     
-    bot.answer_callback_query(call.id)
+    return ADMIN_MENU
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith('set_timezone_'))
-def handle_set_timezone(call):
-    """معالجة تعيين المنطقة الزمنية"""
-    parts = call.data.split('_', 3)
-    if len(parts) != 4:
-        bot.answer_callback_query(call.id, "خطأ في البيانات")
-        return
+async def admin_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالجة اختيارات قائمة المسؤول"""
+    query = update.callback_query
+    await query.answer()
     
-    group_id = parts[2]
-    timezone = parts[3]
-    
-    # تحديث المنطقة الزمنية
-    db.update_group(group_id, timezone=timezone)
-    
-    # إعادة جدولة المهمة
-    schedule_2fa_task(group_id)
-    
-    bot.send_message(
-        call.message.chat.id,
-        f"تم تعيين المنطقة الزمنية للمجموعة {group_id} إلى {timezone}"
-    )
-    
-    bot.answer_callback_query(call.id)
+    if query.data == "add_group":
+        await query.edit_message_text(
+            "الرجاء إدخال معرف المجموعة الخاصة (مثال: -1002329495586):"
+        )
+        return ADD_GROUP
+    elif query.data == "remove_group":
+        # عرض قائمة المجموعات للاختيار
+        return await show_group_selection(update, context, "remove_group")
+    elif query.data == "toggle_group":
+        # عرض قائمة المجموعات للاختيار
+        return await show_group_selection(update, context, "toggle_group")
+    elif query.data == "set_interval":
+        # عرض قائمة المجموعات للاختيار
+        return await show_group_selection(update, context, "set_interval")
+    elif query.data == "customize_message":
+        # عرض قائمة المجموعات للاختيار
+        return await show_group_selection(update, context, "customize_message")
+    elif query.data == "set_attempts":
+        # عرض قائمة المجموعات للاختيار
+        return await show_group_selection(update, context, "set_attempts")
+    elif query.data == "manual_send":
+        # عرض قائمة المجموعات للاختيار
+        return await show_group_selection(update, context, "manual_send")
+    elif query.data == "add_admin":
+        await query.edit_message_text(
+            "الرجاء إدخال معرف المسؤول الجديد (مثال: 764559466):"
+        )
+        return ADD_ADMIN
+    elif query.data == "remove_admin":
+        # عرض قائمة المسؤولين للاختيار
+        keyboard = []
+        for admin_id in config["admins"]:
+            keyboard.append([InlineKeyboardButton(f"المسؤول: {admin_id}", callback_data=f"remove_admin_{admin_id}")])
+        
+        keyboard.append([InlineKeyboardButton("رجوع", callback_data="back_to_admin")])
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await query.edit_message_text(
+            "الرجاء اختيار المسؤول الذي ترغب في إزالته:",
+            reply_markup=reply_markup
+        )
+        return REMOVE_ADMIN
+    elif query.data == "cancel":
+        await query.edit_message_text("تم إلغاء العملية.")
+        return ConversationHandler.END
+    elif query.data == "back_to_admin":
+        # العودة إلى قائمة المسؤول الرئيسية
+        return await admin_command(update, context)
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith('format_time_'))
-def handle_format_time(call):
-    """معالجة تغيير صيغة الوقت"""
-    parts = call.data.split('_', 3)
-    if len(parts) != 3:
-        bot.answer_callback_query(call.id, "خطأ في البيانات")
-        return
+async def show_group_selection(update: Update, context: ContextTypes.DEFAULT_TYPE, next_action):
+    """عرض قائمة المجموعات للاختيار"""
+    query = update.callback_query
     
-    group_id = parts[2]
+    # حفظ الإجراء التالي في سياق المحادثة
+    context.user_data["next_action"] = next_action
     
-    markup = types.InlineKeyboardMarkup(row_width=2)
+    keyboard = []
+    for group_id in config["groups"]:
+        status = "✅" if config["groups"][group_id]["active"] else "❌"
+        keyboard.append([InlineKeyboardButton(
+            f"{status} المجموعة: {group_id}",
+            callback_data=f"select_group_{group_id}"
+        )])
     
-    btn_12 = types.InlineKeyboardButton(
-        "صيغة 12 ساعة",
-        callback_data=f"set_time_format_{group_id}_12"
+    keyboard.append([InlineKeyboardButton("رجوع", callback_data="back_to_admin")])
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(
+        "الرجاء اختيار المجموعة:",
+        reply_markup=reply_markup
     )
-    
-    btn_24 = types.InlineKeyboardButton(
-        "صيغة 24 ساعة",
-        callback_data=f"set_time_format_{group_id}_24"
-    )
-    
-    markup.add(btn_12, btn_24)
-    
-    bot.send_message(
-        call.message.chat.id,
-        "اختر صيغة الوقت:",
-        reply_markup=markup
-    )
-    
-    bot.answer_callback_query(call.id)
+    return SELECT_GROUP
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith('set_time_format_'))
-def handle_set_time_format(call):
-    """معالجة تعيين صيغة الوقت"""
-    parts = call.data.split('_', 4)
-    if len(parts) != 5:
-        bot.answer_callback_query(call.id, "خطأ في البيانات")
-        return
+async def select_group_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالجة اختيار المجموعة"""
+    query = update.callback_query
+    await query.answer()
     
-    group_id = parts[3]
-    time_format = parts[4]
+    if query.data == "back_to_admin":
+        # العودة إلى قائمة المسؤول الرئيسية
+        return await admin_command(update, context)
     
-    # تحديث صيغة الوقت
-    db.update_group(group_id, time_format=time_format)
+    # استخراج معرف المجموعة من البيانات
+    group_id = query.data.replace("select_group_", "")
+    context.user_data["selected_group"] = group_id
     
-    # إعادة جدولة المهمة
-    schedule_2fa_task(group_id)
+    next_action = context.user_data.get("next_action")
     
-    bot.send_message(
-        call.message.chat.id,
-        f"تم تعيين صيغة الوقت للمجموعة {group_id} إلى {time_format} ساعة"
-    )
+    if next_action == "remove_group":
+        keyboard = [
+            [InlineKeyboardButton("نعم، حذف المجموعة", callback_data="confirm_remove_group")],
+            [InlineKeyboardButton("لا، إلغاء", callback_data="back_to_admin")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await query.edit_message_text(
+            f"هل أنت متأكد من حذف المجموعة {group_id}؟",
+            reply_markup=reply_markup
+        )
+        return REMOVE_GROUP
+    elif next_action == "toggle_group":
+        current_status = config["groups"][group_id]["active"]
+        new_status = "تعطيل" if current_status else "تفعيل"
+        
+        keyboard = [
+            [InlineKeyboardButton(f"نعم، {new_status} المجموعة", callback_data="confirm_toggle_group")],
+            [InlineKeyboardButton("لا، إلغاء", callback_data="back_to_admin")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await query.edit_message_text(
+            f"هل ترغب في {new_status} المجموعة {group_id}؟",
+            reply_markup=reply_markup
+        )
+        return TOGGLE_GROUP_STATUS
+    elif next_action == "set_interval":
+        keyboard = []
+        for interval in [1, 5, 10, 15, 30, 60]:
+            keyboard.append([InlineKeyboardButton(
+                f"{interval} دقيقة",
+                callback_data=f"interval_{interval}"
+            )])
+        
+        keyboard.append([InlineKeyboardButton("رجوع", callback_data="back_to_admin")])
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        current_interval = config["groups"][group_id]["interval"]
+        
+        await query.edit_message_text(
+            f"الفاصل الزمني الحالي: {current_interval} دقيقة\n"
+            f"الرجاء اختيار الفاصل الزمني الجديد لإرسال الرموز:",
+            reply_markup=reply_markup
+        )
+        return SET_INTERVAL
+    elif next_action == "customize_message":
+        # سيتم تنفيذ هذا في الخطوة التالية
+        keyboard = [
+            [InlineKeyboardButton("تعديل السطر الأول", callback_data="edit_line1")],
+            [InlineKeyboardButton("تعديل السطر الثاني", callback_data="edit_line2")],
+            [InlineKeyboardButton("تغيير المنطقة الزمنية", callback_data="change_timezone")],
+            [InlineKeyboardButton("تغيير تنسيق الوقت", callback_data="change_time_format")],
+            [InlineKeyboardButton("تغيير خيارات عرض الرسالة", callback_data="toggle_message_options")],
+            [InlineKeyboardButton("رجوع", callback_data="back_to_admin")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        group_config = config["groups"][group_id]
+        timezone = group_config["timezone"]
+        time_format = group_config["time_format"]
+        line1 = group_config["message_format"]["line1"]
+        line2 = group_config["message_format"]["line2"]
+        
+        await query.edit_message_text(
+            f"إعدادات الرسالة الحالية للمجموعة {group_id}:\n\n"
+            f"السطر الأول: {line1}\n"
+            f"السطر الثاني: {line2}\n"
+            f"المنطقة الزمنية: {timezone}\n"
+            f"تنسيق الوقت: {time_format} ساعة\n\n"
+            f"الرجاء اختيار الإعداد الذي ترغب في تغييره:",
+            reply_markup=reply_markup
+        )
+        return CUSTOMIZE_MESSAGE
+    elif next_action == "set_attempts":
+        keyboard = []
+        for attempts in [1, 3, 5, 10, 15, 20, 30, 50]:
+            keyboard.append([InlineKeyboardButton(
+                f"{attempts} محاولة",
+                callback_data=f"attempts_{attempts}"
+            )])
+        
+        keyboard.append([InlineKeyboardButton("رجوع", callback_data="back_to_admin")])
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        current_attempts = config["groups"][group_id]["max_attempts"]
+        
+        await query.edit_message_text(
+            f"الحد الأقصى الحالي للمحاولات: {current_attempts}\n"
+            f"الرجاء اختيار الحد الأقصى الجديد للمحاولات اليومية:",
+            reply_markup=reply_markup
+        )
+        return SET_ATTEMPTS
+    elif next_action == "manual_send":
+        keyboard = [
+            [InlineKeyboardButton("نعم، إرسال الرمز الآن", callback_data=f"send_code_{group_id}")],
+            [InlineKeyboardButton("لا، إلغاء", callback_data="back_to_admin")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await query.edit_message_text(
+            f"هل ترغب في إرسال رمز 2FA إلى المجموعة {group_id} الآن؟",
+            reply_markup=reply_markup
+        )
+        return WAITING_FOR_MANUAL_SEND
     
-    bot.answer_callback_query(call.id)
+    # إذا وصلنا إلى هنا، فهناك خطأ ما
+    await query.edit_message_text("حدث خطأ. الرجاء المحاولة مرة أخرى.")
+    return ConversationHandler.END
 
-def show_users_list(chat_id):
-    """عرض قائمة المستخدمين"""
-    users = db.get_all_users()
+async def add_group_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالجة إضافة مجموعة جديدة"""
+    group_id = update.message.text.strip()
     
-    if not users:
-        bot.send_message(chat_id, "لا يوجد مستخدمين بعد")
-        return
+    # التحقق من صحة معرف المجموعة
+    if not group_id.startswith("-"):
+        await update.message.reply_text(
+            "معرف المجموعة غير صالح. يجب أن يبدأ بعلامة سالب (-). الرجاء المحاولة مرة أخرى."
+        )
+        return ADD_GROUP
     
-    markup = types.InlineKeyboardMarkup(row_width=1)
+    # إضافة المجموعة
+    result = add_group(group_id)
     
-    for user_id, user_data in users.items():
-        total_used = user_data.get("total_used", 0)
-        btn_text = f"المستخدم: {user_id} - عدد الاستخدامات: {total_used}"
-        callback_data = f"user_details_{user_id}"
-        markup.add(types.InlineKeyboardButton(btn_text, callback_data=callback_data))
-    
-    bot.send_message(
-        chat_id,
-        "اختر مستخدم لعرض التفاصيل:",
-        reply_markup=markup
-    )
+    if result:
+        await update.message.reply_text(
+            f"تمت إضافة المجموعة {group_id} بنجاح.\n"
+            f"الآن، الرجاء إدخال TOTP_SECRET للمجموعة:"
+        )
+        context.user_data["new_group_id"] = group_id
+        return ADD_TOTP
+    else:
+        await update.message.reply_text(
+            f"المجموعة {group_id} موجودة بالفعل.\n"
+            f"الرجاء إدخال TOTP_SECRET جديد للمجموعة:"
+        )
+        context.user_data["new_group_id"] = group_id
+        return ADD_TOTP
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith('user_details_'))
-def handle_user_details(call):
-    """معالجة عرض تفاصيل المستخدم"""
-    parts = call.data.split('_', 2)
-    if len(parts) != 3:
-        bot.answer_callback_query(call.id, "خطأ في البيانات")
-        return
+async def add_totp_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالجة إضافة TOTP_SECRET للمجموعة"""
+    totp_secret = update.message.text.strip()
+    group_id = context.user_data.get("new_group_id")
     
-    user_id = parts[2]
-    user_data = db.get_all_users().get(user_id, {})
-    
-    if not user_data:
-        bot.send_message(call.message.chat.id, "لا توجد بيانات لهذا المستخدم")
-        return
-    
-    total_used = user_data.get("total_used", 0)
-    attempts = user_data.get("attempts", {})
-    
-    message_text = f"تفاصيل المستخدم {user_id}:\n"
-    message_text += f"إجمالي الاستخدامات: {total_used}\n\n"
-    message_text += "المحاولات المتبقية حسب المجموعة:\n"
-    
-    for group_id, remaining in attempts.items():
-        message_text += f"المجموعة {group_id}: {remaining} محاولات\n"
-    
-    markup = types.InlineKeyboardMarkup(row_width=2)
-    
-    btn_reset = types.InlineKeyboardButton(
-        "إعادة تعيين المحاولات",
-        callback_data=f"reset_user_{user_id}"
-    )
-    
-    btn_manage_attempts = types.InlineKeyboardButton(
-        "إدارة عدد المحاولات",
-        callback_data=f"manage_attempts_{user_id}"
-    )
-    
-    markup.add(btn_reset, btn_manage_attempts)
-    
-    bot.send_message(
-        call.message.chat.id,
-        message_text,
-        reply_markup=markup
-    )
-    
-    bot.answer_callback_query(call.id)
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith('manage_attempts_'))
-def handle_manage_attempts(call):
-    """معالجة إدارة عدد المحاولات"""
-    parts = call.data.split('_', 2)
-    if len(parts) != 3:
-        bot.answer_callback_query(call.id, "خطأ في البيانات")
-        return
-    
-    user_id = parts[2]
-    user_data = db.get_all_users().get(user_id, {})
-    attempts = user_data.get("attempts", {})
-    
-    if not attempts:
-        bot.send_message(call.message.chat.id, "لا توجد محاولات لهذا المستخدم")
-        return
-    
-    markup = types.InlineKeyboardMarkup(row_width=1)
-    
-    for group_id, remaining in attempts.items():
-        btn_text = f"المجموعة {group_id}: {remaining} محاولات"
-        callback_data = f"select_group_attempts_{user_id}_{group_id}"
-        markup.add(types.InlineKeyboardButton(btn_text, callback_data=callback_data))
-        logger.info(f"تم إنشاء زر للمجموعة {group_id} مع callback_data: {callback_data}")
-    
-    bot.send_message(
-        call.message.chat.id,
-        f"اختر المجموعة لإدارة محاولات المستخدم {user_id}:",
-        reply_markup=markup
-    )
-    
-    bot.answer_callback_query(call.id)
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith('select_group_attempts_'))
-def handle_select_group_attempts(call):
-    """معالجة اختيار المجموعة لإدارة المحاولات"""
-    logger.info(f"تم استدعاء handle_select_group_attempts مع callback_data: {call.data}")
-    
-    # تقسيم callback_data مع مراعاة أن group_id قد يحتوي على علامة سالبة
-    parts = call.data.split('_')
-    if len(parts) < 4:
-        logger.error(f"خطأ في تقسيم callback_data: {call.data}")
-        bot.answer_callback_query(call.id, "خطأ في البيانات")
-        return
-    
-    # استخراج user_id و group_id بشكل ديناميكي
-    user_id = parts[3]
-    # إعادة بناء group_id (قد يحتوي على علامة سالبة)
-    group_id = '_'.join(parts[4:])  # نأخذ كل الأجزاء المتبقية كـ group_id
-    
-    logger.info(f"تم استخراج user_id: {user_id}, group_id: {group_id}")
-    
-    markup = types.InlineKeyboardMarkup(row_width=2)
-    
-    btn_increase = types.InlineKeyboardButton(
-        "زيادة المحاولات",
-        callback_data=f"increase_attempts_{user_id}_{group_id}"
-    )
-    
-    btn_decrease = types.InlineKeyboardButton(
-        "نقصان المحاولات",
-        callback_data=f"decrease_attempts_{user_id}_{group_id}"
-    )
-    
-    markup.add(btn_increase, btn_decrease)
-    
-    bot.send_message(
-        call.message.chat.id,
-        f"اختر الإجراء لإدارة محاولات المستخدم {user_id} في المجموعة {group_id}:",
-        reply_markup=markup
-    )
-    
-    bot.answer_callback_query(call.id)
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith('increase_attempts_') or call.data.startswith('decrease_attempts_'))
-def handle_adjust_attempts(call):
-    """معالجة طلب زيادة أو نقصان المحاولات"""
-    parts = call.data.split('_')
-    if len(parts) < 4:
-        bot.answer_callback_query(call.id, "خطأ في البيانات")
-        return
-    
-    action = parts[0]  # increase_attempts or decrease_attempts
-    user_id = parts[2]
-    group_id = '_'.join(parts[3:])  # إعادة بناء group_id مع مراعاة العلامة السالبة
-    
-    # طلب إدخال عدد المحاولات
-    msg = bot.send_message(
-        call.message.chat.id,
-        f"أدخل عدد المحاولات الجديد للمستخدم {user_id} في المجموعة {group_id} (عدد صحيح غير سالب):"
-    )
-    
-    bot.register_next_step_handler(msg, process_attempts_input, user_id=user_id, group_id=group_id, action=action)
-    
-    bot.answer_callback_query(call.id)
-
-def process_attempts_input(message, user_id, group_id, action):
-    """معالجة إدخال عدد المحاولات"""
+    # التحقق من صحة TOTP_SECRET
     try:
-        new_attempts = int(message.text.strip())
-        if new_attempts < 0:
-            bot.send_message(
-                message.chat.id,
-                MESSAGE_TEMPLATES["error"].format(error="عدد المحاولات يجب أن يكون غير سالب")
+        # محاولة إنشاء كائن TOTP للتحقق من صحة السر
+        totp = pyotp.TOTP(totp_secret)
+        code = totp.now()  # هذا سيفشل إذا كان السر غير صالح
+    except Exception as e:
+        await update.message.reply_text(
+            f"TOTP_SECRET غير صالح. الرجاء المحاولة مرة أخرى.\n"
+            f"الخطأ: {str(e)}"
+        )
+        return ADD_TOTP
+    
+    # تعيين TOTP_SECRET للمجموعة
+    set_group_totp(group_id, totp_secret)
+    
+    # عرض قائمة الفواصل الزمنية
+    keyboard = []
+    for interval in [1, 5, 10, 15, 30, 60]:
+        keyboard.append([InlineKeyboardButton(
+            f"{interval} دقيقة",
+            callback_data=f"interval_{interval}"
+        )])
+    
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await update.message.reply_text(
+        f"تم تعيين TOTP_SECRET للمجموعة {group_id} بنجاح.\n"
+        f"الرجاء اختيار الفاصل الزمني لإرسال الرموز:",
+        reply_markup=reply_markup
+    )
+    
+    return SET_INTERVAL
+
+async def set_interval_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالجة تعيين الفاصل الزمني"""
+    query = update.callback_query
+    await query.answer()
+    
+    if query.data == "back_to_admin":
+        # العودة إلى قائمة المسؤول الرئيسية
+        return await admin_command(update, context)
+    
+    # استخراج الفاصل الزمني من البيانات
+    interval = int(query.data.replace("interval_", ""))
+    group_id = context.user_data.get("selected_group") or context.user_data.get("new_group_id")
+    
+    # تعيين الفاصل الزمني للمجموعة
+    set_group_interval(group_id, interval)
+    
+    # إذا كانت مجموعة جديدة، اسأل عن تفعيلها
+    if context.user_data.get("new_group_id"):
+        keyboard = [
+            [InlineKeyboardButton("نعم، تفعيل الآن", callback_data="activate_now")],
+            [InlineKeyboardButton("لا، لاحقاً", callback_data="activate_later")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await query.edit_message_text(
+            f"تم تعيين الفاصل الزمني للمجموعة {group_id} إلى {interval} دقيقة بنجاح.\n"
+            f"هل ترغب في تفعيل إرسال الرموز للمجموعة الآن؟",
+            reply_markup=reply_markup
+        )
+        
+        return TOGGLE_GROUP_STATUS
+    else:
+        await query.edit_message_text(
+            f"تم تعيين الفاصل الزمني للمجموعة {group_id} إلى {interval} دقيقة بنجاح."
+        )
+        
+        # العودة إلى قائمة المسؤول بعد ثانيتين
+        await asyncio.sleep(2)
+        return await admin_command(update, context)
+
+async def toggle_group_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالجة تفعيل/تعطيل المجموعة"""
+    query = update.callback_query
+    await query.answer()
+    
+    if query.data == "back_to_admin":
+        # العودة إلى قائمة المسؤول الرئيسية
+        return await admin_command(update, context)
+    
+    group_id = context.user_data.get("selected_group") or context.user_data.get("new_group_id")
+    
+    if query.data in ["confirm_toggle_group", "activate_now"]:
+        # تبديل حالة المجموعة
+        new_status = toggle_group_status(group_id)
+        status_text = "تفعيل" if new_status else "تعطيل"
+        
+        await query.edit_message_text(
+            f"تم {status_text} المجموعة {group_id} بنجاح.\n\n"
+            f"ملاحظة: نظراً لقيود النظام، يجب عليك إرسال الرموز يدوياً من قائمة المسؤول."
+        )
+    else:  # activate_later
+        await query.edit_message_text(
+            f"تم الاحتفاظ بالمجموعة {group_id} في حالة غير مفعلة."
+        )
+    
+    # العودة إلى قائمة المسؤول بعد ثانيتين
+    await asyncio.sleep(2)
+    return await admin_command(update, context)
+
+async def remove_group_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالجة حذف المجموعة"""
+    query = update.callback_query
+    await query.answer()
+    
+    if query.data == "back_to_admin":
+        # العودة إلى قائمة المسؤول الرئيسية
+        return await admin_command(update, context)
+    
+    group_id = context.user_data.get("selected_group")
+    
+    if query.data == "confirm_remove_group":
+        # حذف المجموعة
+        result = remove_group(group_id)
+        
+        if result:
+            await query.edit_message_text(
+                f"تم حذف المجموعة {group_id} بنجاح."
             )
-            return
-        
-        # تحديث عدد المحاولات
-        db.set_user_attempts(user_id, group_id, new_attempts)
-        
-        action_text = "زيادة" if action == "increase_attempts" else "نقصان"
-        bot.send_message(
-            message.chat.id,
-            f"تم {action_text} محاولات المستخدم {user_id} في المجموعة {group_id} إلى {new_attempts} بنجاح"
+        else:
+            await query.edit_message_text(
+                f"فشل في حذف المجموعة {group_id}."
+            )
+    else:
+        await query.edit_message_text(
+            "تم إلغاء عملية الحذف."
         )
     
-    except ValueError:
-        bot.send_message(
-            message.chat.id,
-            MESSAGE_TEMPLATES["error"].format(error="يرجى إدخال عدد صحيح صالح")
+    # العودة إلى قائمة المسؤول بعد ثانيتين
+    await asyncio.sleep(2)
+    return await admin_command(update, context)
+
+async def set_attempts_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالجة تعيين عدد المحاولات"""
+    query = update.callback_query
+    await query.answer()
+    
+    if query.data == "back_to_admin":
+        # العودة إلى قائمة المسؤول الرئيسية
+        return await admin_command(update, context)
+    
+    # استخراج عدد المحاولات من البيانات
+    attempts = int(query.data.replace("attempts_", ""))
+    group_id = context.user_data.get("selected_group")
+    
+    # تعيين عدد المحاولات للمجموعة
+    set_group_max_attempts(group_id, attempts)
+    
+    await query.edit_message_text(
+        f"تم تعيين الحد الأقصى للمحاولات اليومية للمجموعة {group_id} إلى {attempts} محاولة بنجاح."
+    )
+    
+    # العودة إلى قائمة المسؤول بعد ثانيتين
+    await asyncio.sleep(2)
+    return await admin_command(update, context)
+
+async def customize_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالجة تخصيص الرسالة"""
+    query = update.callback_query
+    await query.answer()
+    
+    if query.data == "back_to_admin":
+        # العودة إلى قائمة المسؤول الرئيسية
+        return await admin_command(update, context)
+    
+    group_id = context.user_data.get("selected_group")
+    
+    if query.data == "edit_line1":
+        await query.edit_message_text(
+            f"الرجاء إدخال النص الجديد للسطر الأول:"
         )
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith('reset_user_'))
-def handle_reset_user(call):
-    """معالجة إعادة تعيين محاولات المستخدم"""
-    parts = call.data.split('_', 2)
-    if len(parts) != 3:
-        bot.answer_callback_query(call.id, "خطأ في البيانات")
-        return
-    
-    user_id = parts[2]
-    
-    # عرض قائمة المجموعات لإعادة تعيين المحاولات
-    user_data = db.get_all_users().get(user_id, {})
-    attempts = user_data.get("attempts", {})
-    
-    if not attempts:
-        bot.send_message(call.message.chat.id, "لا توجد محاولات لهذا المستخدم")
-        return
-    
-    markup = types.InlineKeyboardMarkup(row_width=1)
-    
-    for group_id, remaining in attempts.items():
-        btn_text = f"المجموعة {group_id}: {remaining} محاولات"
-        callback_data = f"reset_attempts_{user_id}_{group_id}"
-        markup.add(types.InlineKeyboardButton(btn_text, callback_data=callback_data))
-    
-    # إضافة زر لإعادة تعيين جميع المحاولات
-    markup.add(types.InlineKeyboardButton(
-        "إعادة تعيين جميع المحاولات",
-        callback_data=f"reset_all_attempts_{user_id}"
-    ))
-    
-    bot.send_message(
-        call.message.chat.id,
-        "اختر المجموعة لإعادة تعيين المحاولات:",
-        reply_markup=markup
-    )
-    
-    bot.answer_callback_query(call.id)
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith('reset_attempts_'))
-def handle_reset_attempts(call):
-    """معالجة إعادة تعيين محاولات المستخدم لمجموعة محددة"""
-    parts = call.data.split('_')
-    if len(parts) < 4:
-        bot.answer_callback_query(call.id, "خطأ في البيانات")
-        return
-    
-    user_id = parts[2]
-    group_id = '_'.join(parts[3:])  # إعادة بناء group_id
-    
-    # إعادة تعيين المحاولات
-    default_attempts = db.get_setting("default_attempts")
-    db.set_user_attempts(user_id, group_id, default_attempts)
-    
-    bot.send_message(
-        call.message.chat.id,
-        f"تم إعادة تعيين محاولات المستخدم {user_id} للمجموعة {group_id} إلى {default_attempts}"
-    )
-    
-    bot.answer_callback_query(call.id)
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith('reset_all_attempts_'))
-def handle_reset_all_attempts(call):
-    """معالجة إعادة تعيين جميع محاولات المستخدم"""
-    parts = call.data.split('_', 3)
-    if len(parts) != 4:
-        bot.answer_callback_query(call.id, "خطأ في البيانات")
-        return
-    
-    user_id = parts[3]
-    
-    # إعادة تعيين جميع المحاولات
-    user_data = db.get_all_users().get(user_id, {})
-    attempts = user_data.get("attempts", {})
-    default_attempts = db.get_setting("default_attempts")
-    
-    for group_id in attempts:
-        db.set_user_attempts(user_id, group_id, default_attempts)
-    
-    bot.send_message(
-        call.message.chat.id,
-        f"تم إعادة تعيين جميع محاولات المستخدم {user_id} إلى {default_attempts}"
-    )
-    
-    bot.answer_callback_query(call.id)
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith('copy_') and not call.data.startswith('copy_code_'))
-def handle_copy_code(call):
-    """معالجة نسخ رمز المصادقة في الوقت الفعلي"""
-    parts = call.data.split('_', 3)
-    if len(parts) < 3:
-        bot.answer_callback_query(call.id, "خطأ في البيانات")
-        return
-    
-    group_id = parts[1]
-    user_id = call.from_user.id
-    
-    # التحقق من عدد المحاولات المتبقية قبل التحديث
-    current_attempts = db.get_user_attempts(user_id, group_id)
-    
-    if current_attempts <= 0:
-        # لا توجد محاولات متبقية
-        bot.answer_callback_query(
-            call.id,
-            text=f"لقد استنفذت جميع محاولاتك اليومية. يرجى الانتظار حتى منتصف الليل لإعادة تعيين المحاولات.",
-            show_alert=True
+        context.user_data["edit_field"] = "line1"
+        return CUSTOMIZE_MESSAGE
+    elif query.data == "edit_line2":
+        await query.edit_message_text(
+            f"الرجاء إدخال النص الجديد للسطر الثاني:"
         )
-        return
+        context.user_data["edit_field"] = "line2"
+        return CUSTOMIZE_MESSAGE
+    elif query.data == "change_timezone":
+        keyboard = [
+            [InlineKeyboardButton("التوقيت العالمي (UTC)", callback_data="timezone_UTC")],
+            [InlineKeyboardButton("توقيت فلسطين", callback_data="timezone_Palestine")],
+            [InlineKeyboardButton("رجوع", callback_data="back_to_customize")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await query.edit_message_text(
+            f"الرجاء اختيار المنطقة الزمنية:",
+            reply_markup=reply_markup
+        )
+        return SELECT_TIMEZONE
+    elif query.data == "change_time_format":
+        keyboard = [
+            [InlineKeyboardButton("تنسيق 12 ساعة", callback_data="time_format_12")],
+            [InlineKeyboardButton("تنسيق 24 ساعة", callback_data="time_format_24")],
+            [InlineKeyboardButton("رجوع", callback_data="back_to_customize")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await query.edit_message_text(
+            f"الرجاء اختيار تنسيق الوقت:",
+            reply_markup=reply_markup
+        )
+        return SELECT_TIME_FORMAT
+    elif query.data == "toggle_message_options":
+        # عرض خيارات عناصر الرسالة
+        group_config = config["groups"][group_id]["message_format"]
+        show_current_time = "✅" if group_config["show_current_time"] else "❌"
+        show_next_code_in = "✅" if group_config["show_next_code_in"] else "❌"
+        show_next_code_at = "✅" if group_config["show_next_code_at"] else "❌"
+        
+        keyboard = [
+            [InlineKeyboardButton(f"{show_current_time} عرض الوقت الحالي", callback_data="toggle_show_current_time")],
+            [InlineKeyboardButton(f"{show_next_code_in} عرض المدة المتبقية للرمز التالي", callback_data="toggle_show_next_code_in")],
+            [InlineKeyboardButton(f"{show_next_code_at} عرض وقت الرمز التالي", callback_data="toggle_show_next_code_at")],
+            [InlineKeyboardButton("رجوع", callback_data="back_to_customize")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await query.edit_message_text(
+            f"خيارات عرض عناصر الرسالة للمجموعة {group_id}:\n"
+            f"الرجاء اختيار العنصر الذي ترغب في تغيير حالته:",
+            reply_markup=reply_markup
+        )
+        return TOGGLE_MESSAGE_OPTIONS
+    elif query.data == "back_to_customize":
+        # العودة إلى قائمة تخصيص الرسالة
+        group_config = config["groups"][group_id]
+        timezone = group_config["timezone"]
+        time_format = group_config["time_format"]
+        line1 = group_config["message_format"]["line1"]
+        line2 = group_config["message_format"]["line2"]
+        
+        keyboard = [
+            [InlineKeyboardButton("تعديل السطر الأول", callback_data="edit_line1")],
+            [InlineKeyboardButton("تعديل السطر الثاني", callback_data="edit_line2")],
+            [InlineKeyboardButton("تغيير المنطقة الزمنية", callback_data="change_timezone")],
+            [InlineKeyboardButton("تغيير تنسيق الوقت", callback_data="change_time_format")],
+            [InlineKeyboardButton("تغيير خيارات عرض الرسالة", callback_data="toggle_message_options")],
+            [InlineKeyboardButton("رجوع", callback_data="back_to_admin")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await query.edit_message_text(
+            f"إعدادات الرسالة الحالية للمجموعة {group_id}:\n\n"
+            f"السطر الأول: {line1}\n"
+            f"السطر الثاني: {line2}\n"
+            f"المنطقة الزمنية: {timezone}\n"
+            f"تنسيق الوقت: {time_format} ساعة\n\n"
+            f"الرجاء اختيار الإعداد الذي ترغب في تغييره:",
+            reply_markup=reply_markup
+        )
+        return CUSTOMIZE_MESSAGE
+
+async def toggle_message_options_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالجة تغيير خيارات عرض عناصر الرسالة"""
+    query = update.callback_query
+    await query.answer()
     
-    # الحصول على بيانات المجموعة
-    group_data = db.get_group(group_id)
-    if not group_data or not group_data.get("totp_secret"):
-        bot.answer_callback_query(call.id, "خطأ: لا يمكن الوصول إلى بيانات المجموعة")
-        return
+    if query.data == "back_to_customize":
+        # العودة إلى قائمة تخصيص الرسالة
+        return await customize_message_handler(update, context)
     
-    # توليد رمز TOTP في الوقت الفعلي
-    totp_code = generate_totp(group_data["totp_secret"])
-    if not totp_code:
-        bot.answer_callback_query(call.id, "خطأ في توليد رمز المصادقة")
-        return
+    group_id = context.user_data.get("selected_group")
     
-    # تحديث عدد المحاولات
-    remaining = db.update_user_attempts(user_id, group_id)
+    if query.data.startswith("toggle_"):
+        option = query.data.replace("toggle_", "")
+        new_value = toggle_message_option(group_id, option)
+        
+        # عرض خيارات عناصر الرسالة مع التحديث
+        group_config = config["groups"][group_id]["message_format"]
+        show_current_time = "✅" if group_config["show_current_time"] else "❌"
+        show_next_code_in = "✅" if group_config["show_next_code_in"] else "❌"
+        show_next_code_at = "✅" if group_config["show_next_code_at"] else "❌"
+        
+        keyboard = [
+            [InlineKeyboardButton(f"{show_current_time} عرض الوقت الحالي", callback_data="toggle_show_current_time")],
+            [InlineKeyboardButton(f"{show_next_code_in} عرض المدة المتبقية للرمز التالي", callback_data="toggle_show_next_code_in")],
+            [InlineKeyboardButton(f"{show_next_code_at} عرض وقت الرمز التالي", callback_data="toggle_show_next_code_at")],
+            [InlineKeyboardButton("رجوع", callback_data="back_to_customize")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        option_name = ""
+        if option == "show_current_time":
+            option_name = "عرض الوقت الحالي"
+        elif option == "show_next_code_in":
+            option_name = "عرض المدة المتبقية للرمز التالي"
+        elif option == "show_next_code_at":
+            option_name = "عرض وقت الرمز التالي"
+        
+        status = "تفعيل" if new_value else "تعطيل"
+        
+        await query.edit_message_text(
+            f"تم {status} {option_name} بنجاح.\n\n"
+            f"خيارات عرض عناصر الرسالة للمجموعة {group_id}:\n"
+            f"الرجاء اختيار العنصر الذي ترغب في تغيير حالته:",
+            reply_markup=reply_markup
+        )
+        return TOGGLE_MESSAGE_OPTIONS
+
+async def customize_message_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالجة إدخال نص جديد لتخصيص الرسالة"""
+    text = update.message.text.strip()
+    group_id = context.user_data.get("selected_group")
+    field = context.user_data.get("edit_field")
     
-    # إرسال إشعار بسيط
-    bot.answer_callback_query(
-        call.id,
-        text="تم توليد رمز المصادقة. سيتم إرساله إليك في رسالة خاصة."
+    if field in ["line1", "line2"]:
+        # تحديث حقل النص في تنسيق الرسالة
+        config["groups"][group_id]["message_format"][field] = text
+        save_config()
+        
+        await update.message.reply_text(
+            f"تم تحديث {field} بنجاح."
+        )
+    
+    # العودة إلى قائمة تخصيص الرسالة
+    group_config = config["groups"][group_id]
+    timezone = group_config["timezone"]
+    time_format = group_config["time_format"]
+    line1 = group_config["message_format"]["line1"]
+    line2 = group_config["message_format"]["line2"]
+    
+    keyboard = [
+        [InlineKeyboardButton("تعديل السطر الأول", callback_data="edit_line1")],
+        [InlineKeyboardButton("تعديل السطر الثاني", callback_data="edit_line2")],
+        [InlineKeyboardButton("تغيير المنطقة الزمنية", callback_data="change_timezone")],
+        [InlineKeyboardButton("تغيير تنسيق الوقت", callback_data="change_time_format")],
+        [InlineKeyboardButton("تغيير خيارات عرض الرسالة", callback_data="toggle_message_options")],
+        [InlineKeyboardButton("رجوع", callback_data="back_to_admin")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await update.message.reply_text(
+        f"إعدادات الرسالة الحالية للمجموعة {group_id}:\n\n"
+        f"السطر الأول: {line1}\n"
+        f"السطر الثاني: {line2}\n"
+        f"المنطقة الزمنية: {timezone}\n"
+        f"تنسيق الوقت: {time_format} ساعة\n\n"
+        f"الرجاء اختيار الإعداد الذي ترغب في تغييره:",
+        reply_markup=reply_markup
     )
     
-    # إرسال الرمز في رسالة خاصة بدون لوحة مفاتيح ليكون قابلًا للنسخ
-    try:
-        # إرسال الرمز في رسالة خاصة بتنسيق محسن
-        bot.send_message(
-            user_id,
-            f"🔐 رمز المصادقة 2FA\n\n{totp_code}\n\n⚠️ صالح لمدة 30 ثانية فقط!\n\nعدد المحاولات المتبقية: {remaining}",
-            parse_mode=None  # استخدام نص عادي لتسهيل النسخ
-        )
-    except Exception as e:
-        # في حالة فشل إرسال الرسالة الخاصة (مثلاً إذا لم يبدأ المستخدم محادثة مع البوت)
-        logger.error(f"فشل في إرسال رسالة خاصة للمستخدم {user_id}: {e}")
-        bot.answer_callback_query(
-            call.id,
-            text=f"الرمز: {totp_code}\nيرجى بدء محادثة مع البوت للحصول على رسائل خاصة.",
-            show_alert=True
-        )
+    return CUSTOMIZE_MESSAGE
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith('copy_code_'))
-def handle_copy_code_button(call):
-    """معالجة زر نسخ الرمز (لن يُستخدم بعد الآن بسبب إزالة الزر)"""
-    parts = call.data.split('_', 2)
-    if len(parts) != 3:
-        bot.answer_callback_query(call.id, "خطأ في البيانات")
-        return
+async def select_timezone_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالجة اختيار المنطقة الزمنية"""
+    query = update.callback_query
+    await query.answer()
     
-    totp_code = parts[2]
-    bot.answer_callback_query(
-        call.id,
-        text=f"تم نسخ الرمز: {totp_code}",
-        show_alert=True
+    if query.data == "back_to_customize":
+        # العودة إلى قائمة تخصيص الرسالة
+        return await customize_message_handler(update, context)
+    
+    # استخراج المنطقة الزمنية من البيانات
+    timezone = query.data.replace("timezone_", "")
+    group_id = context.user_data.get("selected_group")
+    
+    # تعيين المنطقة الزمنية للمجموعة
+    set_group_timezone(group_id, timezone)
+    
+    await query.edit_message_text(
+        f"تم تعيين المنطقة الزمنية للمجموعة {group_id} إلى {timezone} بنجاح."
     )
-
-def main():
-    """الدالة الرئيسية"""
-    try:
-        logger.info("بدء تشغيل البوت...")
-        
-        # إضافة معالجات إدارة عدد المحاولات
-        add_manage_attempts_handlers(bot, db)
-        
-        # بدء خيط المجدول
-        scheduler_thread_obj = threading.Thread(target=scheduler_thread)
-        scheduler_thread_obj.daemon = True
-        scheduler_thread_obj.start()
-        
-        # جدولة المهام النشطة
-        for group_id, group_data in db.get_all_groups().items():
-            if group_data.get("active") and group_data.get("totp_secret"):
-                schedule_2fa_task(group_id)
-        
-        # بدء البوت
-        bot.infinity_polling()
     
-    except KeyboardInterrupt:
-        logger.info("تم إيقاف البوت بواسطة المستخدم")
-    except Exception as e:
-        logger.error(f"حدث خطأ: {e}")
-    finally:
-        logger.info("إيقاف البوت...")
+    # العودة إلى قائمة تخصيص الرسالة بعد ثانيتين
+    await asyncio.sleep(2)
+    return await customize_message_handler(update, context)
 
+async def select_time_format_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالجة اختيار تنسيق الوقت"""
+    query = update.callback_query
+    await query.answer()
+    
+    if query.data == "back_to_customize":
+        # العودة إلى قائمة تخصيص الرسالة
+        return await customize_message_handler(update, context)
+    
+    # استخراج تنسيق الوقت من البيانات
+    time_format = int(query.data.replace("time_format_", ""))
+    group_id = context.user_data.get("selected_group")
+    
+    # تعيين تنسيق الوقت للمجموعة
+    set_group_time_format(group_id, time_format)
+    
+    await query.edit_message_text(
+        f"تم تعيين تنسيق الوقت للمجموعة {group_id} إلى {time_format} ساعة بنجاح."
+    )
+    
+    # العودة إلى قائمة تخصيص الرسالة بعد ثانيتين
+    await asyncio.sleep(2)
+    return await customize_message_handler(update, context)
+
+async def add_admin_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالجة إضافة مسؤول جديد"""
+    admin_id = update.message.text.strip()
+    
+    # التحقق من صحة معرف المسؤول
+    if not admin_id.isdigit():
+        await update.message.reply_text(
+            "معرف المسؤول غير صالح. يجب أن يكون رقماً. الرجاء المحاولة مرة أخرى."
+        )
+        return ADD_ADMIN
+    
+    # إضافة المسؤول
+    result = add_admin(admin_id)
+    
+    if result:
+        await update.message.reply_text(
+            f"تمت إضافة المسؤول {admin_id} بنجاح."
+        )
+    else:
+        await update.message.reply_text(
+            f"المسؤول {admin_id} موجود بالفعل."
+        )
+    
+    # العودة إلى قائمة المسؤول بعد ثانيتين
+    await asyncio.sleep(2)
+    return await admin_command(update, context)
+
+async def remove_admin_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالجة إزالة مسؤول"""
+    query = update.callback_query
+    await query.answer()
+    
+    if query.data == "back_to_admin":
+        # العودة إلى قائمة المسؤول الرئيسية
+        return await admin_command(update, context)
+    
+    # استخراج معرف المسؤول من البيانات
+    admin_id = query.data.replace("remove_admin_", "")
+    
+    # إزالة المسؤول
+    result = remove_admin(admin_id)
+    
+    if result:
+        await query.edit_message_text(
+            f"تمت إزالة المسؤول {admin_id} بنجاح."
+        )
+    else:
+        await query.edit_message_text(
+            f"فشل في إزالة المسؤول {admin_id}. تأكد من وجود مسؤول واحد على الأقل."
+        )
+    
+    # العودة إلى قائمة المسؤول بعد ثانيتين
+    await asyncio.sleep(2)
+    return await admin_command(update, context)
+
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """إلغاء المحادثة الحالية"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+        await query.edit_message_text("تم إلغاء العملية.")
+    else:
+        await update.message.reply_text("تم إلغاء العملية.")
+    
+    return ConversationHandler.END
+
+# نقطة البداية للبوت
+async def main():
+    """تشغيل البوت"""
+    # تحميل البيانات
+    load_data()
+    
+    # بدء جدولة إعادة تعيين المحاولات اليومية
+    reset_daily_attempts()
+    
+    # إنشاء تطبيق البوت
+    application = Application.builder().token(TOKEN).build()
+    
+    # إضافة معالجات الأوامر
+    application.add_handler(CommandHandler("start", start))
+    
+    # إضافة معالج المحادثة للأمر /admin
+    admin_conv_handler = ConversationHandler(
+        entry_points=[CommandHandler("admin", admin_command)],
+        states={
+            ADMIN_MENU: [
+                CallbackQueryHandler(admin_menu_handler),
+            ],
+            ADD_GROUP: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, add_group_handler),
+            ],
+            ADD_TOTP: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, add_totp_handler),
+            ],
+            SET_INTERVAL: [
+                CallbackQueryHandler(set_interval_handler),
+            ],
+            CUSTOMIZE_MESSAGE: [
+                CallbackQueryHandler(customize_message_handler),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, customize_message_text_handler),
+            ],
+            TOGGLE_MESSAGE_OPTIONS: [
+                CallbackQueryHandler(toggle_message_options_handler),
+            ],
+            SET_ATTEMPTS: [
+                CallbackQueryHandler(set_attempts_handler),
+            ],
+            SELECT_GROUP: [
+                CallbackQueryHandler(select_group_handler),
+            ],
+            SELECT_TIMEZONE: [
+                CallbackQueryHandler(select_timezone_handler),
+            ],
+            SELECT_TIME_FORMAT: [
+                CallbackQueryHandler(select_time_format_handler),
+            ],
+            ADD_ADMIN: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, add_admin_handler),
+            ],
+            REMOVE_ADMIN: [
+                CallbackQueryHandler(remove_admin_handler),
+            ],
+            REMOVE_GROUP: [
+                CallbackQueryHandler(remove_group_handler),
+            ],
+            TOGGLE_GROUP_STATUS: [
+                CallbackQueryHandler(toggle_group_handler),
+            ],
+            WAITING_FOR_MANUAL_SEND: [
+                CallbackQueryHandler(manual_send_code),
+            ],
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
+    )
+    application.add_handler(admin_conv_handler)
+    
+    # إضافة معالج للنقر على زر Copy Code
+    application.add_handler(CallbackQueryHandler(copy_code_handler, pattern="^copy_code_"))
+    
+    # بدء البوت
+    await application.initialize()
+    await application.start()
+    await application.updater.start_polling()
+    
+    # الانتظار حتى يتم إيقاف البوت
+    await application.updater.idle()
+
+# نقطة البداية للسكريبت
 if __name__ == "__main__":
-    main()
+    import asyncio
+    asyncio.run(main())
