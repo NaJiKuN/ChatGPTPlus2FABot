@@ -1,0 +1,17 @@
+[Unit]
+Description=ChatGPTPlus2FABot Telegram Bot Service
+After=network.target
+
+[Service]
+User=ec2-user
+Group=ec2-user
+WorkingDirectory=/home/ec2-user/projects/ChatGPTPlus2FABot
+ExecStart=/usr/bin/python3 /home/ec2-user/projects/ChatGPTPlus2FABot/bot.py
+Restart=always
+RestartSec=10
+StandardOutput=syslog
+StandardError=syslog
+SyslogIdentifier=chatgptplus2fabot
+
+[Install]
+WantedBy=multi-user.target

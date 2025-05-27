@@ -7,6 +7,7 @@
 
 def add_manage_attempts_handlers(bot, db):
     """إضافة معالجات إدارة عدد المحاولات"""
+    from telebot import types
     
     @bot.callback_query_handler(func=lambda call: call.data.startswith('manage_attempts_'))
     def handle_manage_attempts(call):

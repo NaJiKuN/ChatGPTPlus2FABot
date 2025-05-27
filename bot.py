@@ -576,7 +576,7 @@ def handle_user_details(call):
     markup = types.InlineKeyboardMarkup(row_width=2)
     
     btn_reset = types.InlineKeyboardButton(
-        "إعادة تعيين محاولات المستخدم",
+        "إعادة تعيين المحاولات",
         callback_data=f"reset_user_{user_id}"
     )
     
@@ -719,13 +719,28 @@ def handle_copy_code(call):
     # تحديث عدد المحاولات
     remaining = db.update_user_attempts(user_id, group_id)
     
-    # إرسال الرمز للمستخدم مع إمكانية النسخ
-    # استخدام تنسيق خاص لتسهيل النسخ
+    # إرسال إشعار بسيط
     bot.answer_callback_query(
         call.id,
-        text=f"الرمز: {totp_code}\n\nيمكنك نسخ الرمز من هنا: {totp_code}\n\n{MESSAGE_TEMPLATES['attempts_left'].format(attempts=remaining)}",
-        show_alert=True
+        text="تم توليد رمز المصادقة. سيتم إرساله إليك في رسالة خاصة."
     )
+    
+    # إرسال الرمز في رسالة خاصة للمستخدم ليكون قابلاً للنسخ
+    try:
+        # إرسال الرمز في رسالة خاصة
+        bot.send_message(
+            user_id,
+            f"🔐 *رمز المصادقة 2FA*\n\n`{totp_code}`\n\n{MESSAGE_TEMPLATES['attempts_left'].format(attempts=remaining)}",
+            parse_mode="Markdown"
+        )
+    except Exception as e:
+        # في حالة فشل إرسال الرسالة الخاصة (مثلاً إذا لم يبدأ المستخدم محادثة مع البوت)
+        logger.error(f"فشل في إرسال رسالة خاصة للمستخدم {user_id}: {e}")
+        bot.answer_callback_query(
+            call.id,
+            text=f"الرمز: {totp_code}\nيرجى بدء محادثة مع البوت للحصول على رسائل خاصة.",
+            show_alert=True
+        )
 
 def main():
     """الدالة الرئيسية"""
