@@ -28,8 +28,6 @@ from utils import (
     is_valid_group_id,
     is_midnight
 )
-from user_attempts import add_manage_attempts_handlers
-from group_attempts import add_group_attempts_handlers
 
 # إعداد التسجيل
 logging.basicConfig(
@@ -193,12 +191,7 @@ def handle_admin(message):
         callback_data="admin_message_format"
     )
     
-    btn_user_attempts = types.InlineKeyboardButton(
-        "إدارة محاولات المستخدمين",
-        callback_data="admin_user_attempts"
-    )
-    
-    markup.add(btn_add_group, btn_set_interval, btn_message_format, btn_user_attempts)
+    markup.add(btn_add_group, btn_set_interval, btn_message_format)
     
     bot.send_message(
         message.chat.id,
@@ -228,10 +221,6 @@ def handle_admin_callback(call):
     elif call.data == "admin_message_format":
         # عرض قائمة المجموعات لاختيار واحدة
         show_group_selection(call.message.chat.id, "format")
-    
-    elif call.data == "admin_user_attempts":
-        # عرض قائمة المستخدمين
-        show_users_list(call.message.chat.id)
     
     # إزالة علامة "جاري التحميل" من الزر
     bot.answer_callback_query(call.id)
@@ -527,161 +516,6 @@ def handle_set_time_format(call):
     
     bot.answer_callback_query(call.id)
 
-def show_users_list(chat_id):
-    """عرض قائمة المستخدمين"""
-    users = db.get_all_users()
-    
-    if not users:
-        bot.send_message(chat_id, "لا يوجد مستخدمين بعد")
-        return
-    
-    markup = types.InlineKeyboardMarkup(row_width=1)
-    
-    for user_id, user_data in users.items():
-        total_used = user_data.get("total_used", 0)
-        btn_text = f"المستخدم: {user_id} - عدد الاستخدامات: {total_used}"
-        callback_data = f"user_details_{user_id}"
-        markup.add(types.InlineKeyboardButton(btn_text, callback_data=callback_data))
-    
-    bot.send_message(
-        chat_id,
-        "اختر مستخدم لعرض التفاصيل:",
-        reply_markup=markup
-    )
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith('user_details_'))
-def handle_user_details(call):
-    """معالجة عرض تفاصيل المستخدم"""
-    parts = call.data.split('_', 2)
-    if len(parts) != 3:
-        bot.answer_callback_query(call.id, "خطأ في البيانات")
-        return
-    
-    user_id = parts[2]
-    user_data = db.get_all_users().get(user_id, {})
-    
-    if not user_data:
-        bot.send_message(call.message.chat.id, "لا توجد بيانات لهذا المستخدم")
-        return
-    
-    total_used = user_data.get("total_used", 0)
-    attempts = user_data.get("attempts", {})
-    
-    message_text = f"تفاصيل المستخدم {user_id}:\n"
-    message_text += f"إجمالي الاستخدامات: {total_used}\n\n"
-    message_text += "المحاولات المتبقية حسب المجموعة:\n"
-    
-    for group_id, remaining in attempts.items():
-        message_text += f"المجموعة {group_id}: {remaining} محاولات\n"
-    
-    markup = types.InlineKeyboardMarkup(row_width=2)
-    
-    btn_reset = types.InlineKeyboardButton(
-        "إعادة تعيين المحاولات",
-        callback_data=f"reset_user_{user_id}"
-    )
-    
-    btn_manage_attempts = types.InlineKeyboardButton(
-        "إدارة عدد المحاولات",
-        callback_data=f"manage_attempts_{user_id}"
-    )
-    
-    markup.add(btn_reset, btn_manage_attempts)
-    
-    bot.send_message(
-        call.message.chat.id,
-        message_text,
-        reply_markup=markup
-    )
-    
-    bot.answer_callback_query(call.id)
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith('reset_user_'))
-def handle_reset_user(call):
-    """معالجة إعادة تعيين محاولات المستخدم"""
-    parts = call.data.split('_', 2)
-    if len(parts) != 3:
-        bot.answer_callback_query(call.id, "خطأ في البيانات")
-        return
-    
-    user_id = parts[2]
-    
-    # عرض قائمة المجموعات لإعادة تعيين المحاولات
-    user_data = db.get_all_users().get(user_id, {})
-    attempts = user_data.get("attempts", {})
-    
-    if not attempts:
-        bot.send_message(call.message.chat.id, "لا توجد محاولات لهذا المستخدم")
-        return
-    
-    markup = types.InlineKeyboardMarkup(row_width=1)
-    
-    for group_id, remaining in attempts.items():
-        btn_text = f"المجموعة {group_id}: {remaining} محاولات"
-        callback_data = f"reset_attempts_{user_id}_{group_id}"
-        markup.add(types.InlineKeyboardButton(btn_text, callback_data=callback_data))
-    
-    # إضافة زر لإعادة تعيين جميع المحاولات
-    markup.add(types.InlineKeyboardButton(
-        "إعادة تعيين جميع المحاولات",
-        callback_data=f"reset_all_attempts_{user_id}"
-    ))
-    
-    bot.send_message(
-        call.message.chat.id,
-        "اختر المجموعة لإعادة تعيين المحاولات:",
-        reply_markup=markup
-    )
-    
-    bot.answer_callback_query(call.id)
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith('reset_attempts_'))
-def handle_reset_attempts(call):
-    """معالجة إعادة تعيين محاولات المستخدم لمجموعة محددة"""
-    parts = call.data.split('_', 3)
-    if len(parts) != 4:
-        bot.answer_callback_query(call.id, "خطأ في البيانات")
-        return
-    
-    user_id = parts[2]
-    group_id = parts[3]
-    
-    # إعادة تعيين المحاولات
-    default_attempts = db.get_setting("default_attempts")
-    db.set_user_attempts(user_id, group_id, default_attempts)
-    
-    bot.send_message(
-        call.message.chat.id,
-        f"تم إعادة تعيين محاولات المستخدم {user_id} للمجموعة {group_id} إلى {default_attempts}"
-    )
-    
-    bot.answer_callback_query(call.id)
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith('reset_all_attempts_'))
-def handle_reset_all_attempts(call):
-    """معالجة إعادة تعيين جميع محاولات المستخدم"""
-    parts = call.data.split('_', 3)
-    if len(parts) != 4:
-        bot.answer_callback_query(call.id, "خطأ في البيانات")
-        return
-    
-    user_id = parts[3]
-    
-    # إعادة تعيين جميع المحاولات
-    user_data = db.get_all_users().get(user_id, {})
-    attempts = user_data.get("attempts", {})
-    default_attempts = db.get_setting("default_attempts")
-    
-    for group_id in attempts:
-        db.set_user_attempts(user_id, group_id, default_attempts)
-    
-    bot.send_message(
-        call.message.chat.id,
-        f"تم إعادة تعيين جميع محاولات المستخدم {user_id} إلى {default_attempts}"
-    )
-    
-    bot.answer_callback_query(call.id)
-
 @bot.callback_query_handler(func=lambda call: call.data.startswith('copy_'))
 def handle_copy_code(call):
     """معالجة نسخ رمز المصادقة في الوقت الفعلي"""
@@ -764,12 +598,6 @@ def main():
     """الدالة الرئيسية"""
     try:
         logger.info("بدء تشغيل البوت...")
-        
-        # إضافة معالجات إدارة عدد المحاولات
-        add_manage_attempts_handlers(bot, db)
-        
-        # إضافة معالجات إدارة عدد محاولات جميع المستخدمين في المجموعة
-        add_group_attempts_handlers(bot, db)
         
         # بدء خيط المجدول
         scheduler_thread_obj = threading.Thread(target=scheduler_thread)
