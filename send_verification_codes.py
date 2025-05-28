@@ -14,20 +14,24 @@ import pytz
 import sys
 import telegram
 import asyncio
+from dotenv import load_dotenv
+
+# تحميل المتغيرات البيئية
+load_dotenv()
 
 # إعداد التسجيل
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO,
-    filename="/home/ec2-user/projects/ChatGPTPlus2FABot/send_codes.log"
+    filename="send_codes.log"
 )
 logger = logging.getLogger(__name__)
 
 # توكن البوت
-TOKEN = "8119053401:AAHuqgTkiq6M8rT9VSHYEnIl96BHt9lXIZM"
+TOKEN = os.getenv("BOT_TOKEN", "8119053401:AAHuqgTkiq6M8rT9VSHYEnIl96BHt9lXIZM")
 
 # مسار ملف قاعدة البيانات
-DB_FILE = "/home/ec2-user/projects/ChatGPTPlus2FABot/bot_data.db"
+DB_FILE = "bot_data.db"
 
 # وظائف قاعدة البيانات
 def get_active_groups():
@@ -62,6 +66,31 @@ def format_next_time(interval_minutes, timezone_str="Asia/Jerusalem", time_forma
     else:
         return next_time.strftime("%H:%M:%S")  # تنسيق 24 ساعة
 
+def format_current_time(timezone_str="Asia/Jerusalem", time_format="12h"):
+    """تنسيق الوقت الحالي."""
+    tz = pytz.timezone(timezone_str)
+    now = datetime.datetime.now(tz)
+    
+    if time_format == "12h":
+        return now.strftime("%I:%M:%S %p")  # تنسيق 12 ساعة مع AM/PM
+    else:
+        return now.strftime("%H:%M:%S")  # تنسيق 24 ساعة
+
+def get_message_format(format_id, interval_minutes, timezone_str="Asia/Jerusalem", time_format="12h"):
+    """الحصول على تنسيق الرسالة بناءً على معرف التنسيق."""
+    next_time = format_next_time(interval_minutes, timezone_str, time_format)
+    current_time = format_current_time(timezone_str, time_format)
+    
+    if format_id == 1:  # الشكل الأول
+        return f"🔐 2FA Verification Code\n\nNext code at: {next_time}"
+    elif format_id == 2:  # الشكل الثاني
+        return f"🔐 2FA Verification Code\n\nNext code in: {interval_minutes} minutes\n\nNext code at: {next_time}"
+    elif format_id == 3:  # الشكل الثالث
+        return f"🔐 2FA Verification Code\n\nNext code in: {interval_minutes} minutes\nCurrent Time: {current_time}\nNext Code at: {next_time}"
+    else:
+        # تنسيق افتراضي
+        return f"🔐 2FA Verification Code\n\nNext code at: {next_time}"
+
 # وظيفة إرسال رموز التحقق
 async def send_verification_codes():
     """إرسال رموز التحقق إلى المجموعات النشطة."""
@@ -83,14 +112,8 @@ async def send_verification_codes():
                 logger.warning(f"المجموعة {group_id} ليس لديها سر TOTP مكون.")
                 continue
             
-            # تنسيق الوقت التالي
-            next_time = format_next_time(interval, timezone, time_format)
-            
             # تنسيق الرسالة
-            if not message_format:
-                message_format = '🔐 2FA Verification Code\n\nNext code at: {next_time}'
-            
-            message = message_format.format(next_time=next_time)
+            message = get_message_format(message_format, interval, timezone, time_format)
             
             # إنشاء لوحة مفاتيح مضمنة مع زر Copy Code
             keyboard = [[telegram.InlineKeyboardButton("Copy Code", callback_data=f'copy_code_{group_id}')]]
