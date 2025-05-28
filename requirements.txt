@@ -1,1 +1,5 @@
-python-telegram-bot>=20.0\npyotp
+python-telegram-bot>=20.0
+pyotp
+pytz
+apscheduler
+
