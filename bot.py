@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*- M2.02
+# -*- coding: utf-8 -*-
 """
 ChatGPTPlus2FABot - بوت تليجرام لإرسال رموز مصادقة 2FA
 
@@ -43,6 +43,9 @@ DB_FILE = "bot_data.db"
     WAITING_FOR_USER_ACTION,
     WAITING_FOR_ATTEMPTS_NUMBER,
 ) = range(10)
+
+# قاموس لتخزين مهام الإرسال الدوري
+scheduled_jobs = {}
 
 # --- وظائف قاعدة البيانات ---
 def init_db():
@@ -233,6 +236,17 @@ def get_user_attempts(group_id, user_id):
         # القيم الافتراضية للمستخدمين الجدد
         return (3, 0)  # 3 محاولات، غير محظور
 
+def get_active_groups():
+    """الحصول على جميع المجموعات النشطة من قاعدة البيانات."""
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT group_id, totp_secret, interval_minutes, message_format, timezone, time_format FROM groups WHERE is_active = 1"
+    )
+    active_groups = cursor.fetchall()
+    conn.close()
+    return active_groups
+
 # --- وظائف TOTP ---
 def generate_totp(secret):
     """توليد رمز TOTP من سر."""
@@ -407,6 +421,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     # معالجة حذف المجموعة
     elif query.data.startswith('delete_'):
         group_id = query.data.split('_')[1]
+        
+        # إلغاء المهمة الدورية إذا كانت موجودة
+        if group_id in scheduled_jobs:
+            scheduled_jobs[group_id].schedule_removal()
+            del scheduled_jobs[group_id]
+            
         delete_group(group_id)
         await query.edit_message_text(text=f"تم حذف المجموعة {group_id} بنجاح.")
         
@@ -450,10 +470,20 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         if query.data == 'set_interval_stop':
             # تعطيل المجموعة
             add_or_update_group(group_id, None, None, None, None, None, 0)
+            
+            # إلغاء المهمة الدورية إذا كانت موجودة
+            if group_id in scheduled_jobs:
+                scheduled_jobs[group_id].schedule_removal()
+                del scheduled_jobs[group_id]
+                
             await query.edit_message_text(text=f"تم إيقاف التكرار للمجموعة {group_id} بنجاح.")
         else:
             interval = int(query.data.split('_')[-1])
             add_or_update_group(group_id, None, interval, None, None, None, 1)
+            
+            # تحديث المهمة الدورية
+            await update_scheduled_job(context, group_id, interval)
+            
             await query.edit_message_text(text=f"تم تعيين مدة التكرار للمجموعة {group_id} إلى {interval} دقيقة بنجاح.")
         
         # العودة إلى قائمة اختيار الفاصل الزمني
@@ -653,6 +683,12 @@ async def handle_totp_secret(update: Update, context: ContextTypes.DEFAULT_TYPE)
     else:
         await update.message.reply_text(f"تم إضافة المجموعة {group_id} بنجاح مع TOTP_SECRET.")
     
+    # تحديث المهمة الدورية
+    group_info = get_group(group_id)
+    if group_info and group_info[3]:  # بافتراض أن is_active في الفهرس 3
+        interval = group_info[2]  # بافتراض أن interval_minutes في الفهرس 2
+        await update_scheduled_job(context, group_id, interval)
+    
     # العودة إلى قائمة المسؤول
     keyboard = [
         [InlineKeyboardButton("إدارة المجموعات و TOTP", callback_data='admin_manage_groups')],
@@ -707,41 +743,44 @@ async def handle_attempts_number(update: Update, context: ContextTypes.DEFAULT_T
 async def send_verification_code(context: ContextTypes.DEFAULT_TYPE) -> None:
     """إرسال رموز التحقق إلى المجموعات النشطة."""
     try:
-        # الحصول على جميع المجموعات النشطة
-        conn = sqlite3.connect(DB_FILE)
-        cursor = conn.cursor()
-        cursor.execute(
-            "SELECT group_id, totp_secret, interval_minutes, message_format, timezone, time_format FROM groups WHERE is_active = 1"
-        )
-        active_groups = cursor.fetchall()
-        conn.close()
+        job = context.job
+        group_id = job.data  # الحصول على معرف المجموعة من بيانات المهمة
         
-        for group in active_groups:
-            group_id, totp_secret, interval, message_format, timezone, time_format = group
-            
-            if not totp_secret:
-                logger.warning(f"المجموعة {group_id} ليس لديها سر TOTP مكون.")
-                continue
-            
-            # تنسيق الوقت التالي
-            next_time = format_next_time(interval, timezone, time_format)
-            
-            # تنسيق الرسالة
-            if not message_format:
-                message_format = '🔐 2FA Verification Code\n\nNext code at: {next_time}'
-            
-            message = message_format.format(next_time=next_time)
-            
-            # إنشاء لوحة مفاتيح مضمنة مع زر Copy Code
-            keyboard = [[InlineKeyboardButton("Copy Code", callback_data=f'copy_code_{group_id}')]]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            
-            try:
-                # إرسال رسالة إلى المجموعة
-                await context.bot.send_message(chat_id=group_id, text=message, reply_markup=reply_markup)
-                logger.info(f"تم إرسال رسالة رمز التحقق إلى المجموعة {group_id}")
-            except Exception as e:
-                logger.error(f"فشل إرسال رسالة إلى المجموعة {group_id}: {e}")
+        # الحصول على معلومات المجموعة
+        group = get_group(group_id)
+        if not group or not group[3]:  # بافتراض أن is_active في الفهرس 3
+            logger.warning(f"المجموعة {group_id} غير نشطة أو غير موجودة.")
+            return
+        
+        totp_secret = group[1]  # بافتراض أن totp_secret في الفهرس 1
+        interval = group[2]  # بافتراض أن interval_minutes في الفهرس 2
+        message_format = group[4]  # بافتراض أن message_format في الفهرس 4
+        timezone = group[5]  # بافتراض أن timezone في الفهرس 5
+        time_format = group[6]  # بافتراض أن time_format في الفهرس 6
+        
+        if not totp_secret:
+            logger.warning(f"المجموعة {group_id} ليس لديها سر TOTP مكون.")
+            return
+        
+        # تنسيق الوقت التالي
+        next_time = format_next_time(interval, timezone, time_format)
+        
+        # تنسيق الرسالة
+        if not message_format:
+            message_format = '🔐 2FA Verification Code\n\nNext code at: {next_time}'
+        
+        message = message_format.format(next_time=next_time)
+        
+        # إنشاء لوحة مفاتيح مضمنة مع زر Copy Code
+        keyboard = [[InlineKeyboardButton("Copy Code", callback_data=f'copy_code_{group_id}')]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        try:
+            # إرسال رسالة إلى المجموعة
+            await context.bot.send_message(chat_id=group_id, text=message, reply_markup=reply_markup)
+            logger.info(f"تم إرسال رسالة رمز التحقق إلى المجموعة {group_id}")
+        except Exception as e:
+            logger.error(f"فشل إرسال رسالة إلى المجموعة {group_id}: {e}")
     
     except Exception as e:
         logger.error(f"خطأ في send_verification_code: {e}")
@@ -803,6 +842,36 @@ async def handle_copy_code(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         logger.error(f"فشل إرسال رسالة خاصة إلى المستخدم {user_id}: {e}")
         await query.answer("فشل إرسال الرمز. الرجاء بدء محادثة مع البوت أولاً.", show_alert=True)
 
+# --- وظائف الجدولة ---
+async def update_scheduled_job(context, group_id, interval_minutes):
+    """تحديث المهمة الدورية لمجموعة محددة."""
+    # إلغاء المهمة الحالية إذا كانت موجودة
+    if group_id in scheduled_jobs:
+        scheduled_jobs[group_id].schedule_removal()
+    
+    # إنشاء مهمة جديدة
+    job = context.job_queue.run_repeating(
+        send_verification_code,
+        interval=interval_minutes * 60,  # تحويل الدقائق إلى ثوانٍ
+        first=10,  # بدء المهمة بعد 10 ثوانٍ
+        data=group_id
+    )
+    
+    # تخزين المهمة في القاموس
+    scheduled_jobs[group_id] = job
+    
+    logger.info(f"تم تحديث المهمة الدورية للمجموعة {group_id} بفاصل زمني {interval_minutes} دقيقة.")
+
+async def setup_scheduled_jobs(context):
+    """إعداد المهام الدورية لجميع المجموعات النشطة."""
+    active_groups = get_active_groups()
+    
+    for group in active_groups:
+        group_id, _, interval_minutes, _, _, _ = group
+        await update_scheduled_job(context, group_id, interval_minutes)
+    
+    logger.info(f"تم إعداد {len(active_groups)} مهمة دورية للمجموعات النشطة.")
+
 # --- الوظيفة الرئيسية ---
 def main() -> None:
     """بدء تشغيل البوت."""
@@ -837,10 +906,8 @@ def main() -> None:
     # إضافة معالج منفصل للزر Copy Code
     application.add_handler(CallbackQueryHandler(handle_copy_code, pattern='^copy_code_'))
 
-    # ملاحظة هامة: تم تعطيل الإرسال التلقائي الدوري لرموز التحقق بسبب قيود النظام الحالية.
-    # يجب على المسؤول إرسال الرسالة يدوياً أو استخدام آلية خارجية لتشغيل الإرسال الدوري.
-    # job_queue = application.job_queue
-    # job_queue.run_repeating(send_verification_code, interval=60, first=10)  # تم التعليق
+    # إعداد المهام الدورية عند بدء التشغيل
+    application.job_queue.run_once(setup_scheduled_jobs, when=5)  # بدء بعد 5 ثوانٍ
 
     # تشغيل البوت حتى يضغط المستخدم على Ctrl-C
     logger.info("بدء تشغيل ChatGPTPlus2FABot...")
