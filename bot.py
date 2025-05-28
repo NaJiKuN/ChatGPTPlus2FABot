@@ -14,6 +14,7 @@ import pyotp
 import logging
 import datetime
 import threading
+import asyncio
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
@@ -458,17 +459,41 @@ async def copy_code_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"فشل في إرسال رمز 2FA إلى المستخدم {user_id}: {str(e)}")
 
-def start_scheduled_task(group_id):
-    """بدء مهمة مجدولة لإرسال رموز 2FA"""
-    # ملاحظة: هذه الوظيفة تستخدم فقط للإرسال اليدوي من قبل المسؤول
-    # نظراً لأن المهام المجدولة غير مدعومة حالياً
-    pass
+async def scheduled_task(context: ContextTypes.DEFAULT_TYPE, group_id: str):
+    """مهمة مجدولة لإرسال رموز 2FA بشكل تلقائي"""
+    while group_id in config["groups"] and config["groups"][group_id]["active"]:
+        try:
+            # إرسال رمز 2FA
+            await send_2fa_code(context, group_id)
+            # الانتظار لمدة الفاصل الزمني المحدد (بالثواني)
+            interval = config["groups"][group_id]["interval"] * 60
+            await asyncio.sleep(interval)
+        except Exception as e:
+            logger.error(f"خطأ في المهمة المجدولة للمجموعة {group_id}: {str(e)}")
+            await asyncio.sleep(60)  # الانتظار لمدة دقيقة قبل المحاولة التالية لتجنب التكرار السريع
 
-def stop_scheduled_task(group_id):
+def start_scheduled_task(group_id: str):
+    """بدء مهمة مجدولة لإرسال رموز 2FA"""
+    if group_id not in config["groups"]:
+        logger.error(f"لا يمكن بدء المهمة المجدولة: المجموعة {group_id} غير موجودة")
+        return
+    
+    if group_id in active_tasks:
+        stop_scheduled_task(group_id)
+    
+    # إنشاء مهمة جديدة
+    loop = asyncio.get_event_loop()
+    task = loop.create_task(scheduled_task(Application.get_current().bot.get_context(), group_id))
+    active_tasks[group_id] = task
+    logger.info(f"بدأت المهمة المجدولة للمجموعة {group_id}")
+
+def stop_scheduled_task(group_id: str):
     """إيقاف مهمة مجدولة لإرسال رموز 2FA"""
-    # ملاحظة: هذه الوظيفة تستخدم فقط للإرسال اليدوي من قبل المسؤول
-    # نظراً لأن المهام المجدولة غير مدعومة حالياً
-    pass
+    if group_id in active_tasks:
+        task = active_tasks[group_id]
+        task.cancel()
+        del active_tasks[group_id]
+        logger.info(f"تم إيقاف المهمة المجدولة للمجموعة {group_id}")
 
 async def manual_send_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """إرسال رمز 2FA يدوياً من قبل المسؤول"""
@@ -869,8 +894,7 @@ async def toggle_group_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         status_text = "تفعيل" if new_status else "تعطيل"
         
         await query.edit_message_text(
-            f"تم {status_text} المجموعة {group_id} بنجاح.\n\n"
-            f"ملاحظة: نظراً لقيود النظام، يجب عليك إرسال الرموز يدوياً من قائمة المسؤول."
+            f"تم {status_text} المجموعة {group_id} بنجاح."
         )
     else:  # activate_later
         await query.edit_message_text(
@@ -1252,6 +1276,11 @@ async def main():
     
     # إنشاء تطبيق البوت
     application = Application.builder().token(TOKEN).build()
+    
+    # بدء المهام المجدولة للمجموعات النشطة
+    for group_id in config["groups"]:
+        if config["groups"][group_id]["active"]:
+            start_scheduled_task(group_id)
     
     # إضافة معالجات الأوامر
     application.add_handler(CommandHandler("start", start))
