@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*- M2.0
 """
 ChatGPTPlus2FABot - بوت تليجرام لإرسال رموز مصادقة 2FA
 
@@ -13,7 +13,7 @@ import pyotp
 import datetime
 import pytz
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes, ConversationHandler
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes, ConversationHandler, JobQueue
 
 # تمكين التسجيل
 logging.basicConfig(
@@ -809,7 +809,7 @@ def main() -> None:
     init_db()
 
     # إنشاء التطبيق وتمرير توكن البوت الخاص بك.
-    application = Application.builder().token(TOKEN).build()
+    application = Application.builder().token(TOKEN).job_queue(JobQueue(timezone=pytz.timezone("Asia/Jerusalem"))).build()
 
     # إضافة معالج المحادثة للوحة المسؤول
     conv_handler = ConversationHandler(
@@ -839,7 +839,7 @@ def main() -> None:
     
     # ملاحظة: في بيئة الإنتاج، ستستخدم نهجاً أكثر تطوراً
     # لجدولة المهام. هذا تنفيذ مبسط للتوضيح.
-    job_queue.run_repeating(send_verification_code, interval=60, first=10)  # التحقق كل دقيقة
+    job_queue.run_repeating(send_verification_code, interval=600, first=10)  # التحقق كل 10 دقائق
 
     # تشغيل البوت حتى يضغط المستخدم على Ctrl-C
     logger.info("بدء تشغيل ChatGPTPlus2FABot...")
