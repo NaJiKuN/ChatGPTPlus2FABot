@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*- M2.0
+# -*- coding: utf-8 -*-
 """
 ChatGPTPlus2FABot - بوت تليجرام لإرسال رموز مصادقة 2FA
 
