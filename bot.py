@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*- M2.3
+# -*- coding: utf-8 -*- M2.5
 """
 ChatGPTPlus2FABot - بوت تليجرام لإرسال رموز مصادقة 2FA
 
@@ -6,6 +6,7 @@ ChatGPTPlus2FABot - بوت تليجرام لإرسال رموز مصادقة 2FA
 ويرسل الرمز عند الضغط على زر Copy Code برسالة خاصة للمستخدم
 """
 
+import asyncio  # إضافة استيراد asyncio هنا
 import logging
 import sqlite3
 import os
