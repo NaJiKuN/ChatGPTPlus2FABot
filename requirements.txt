@@ -2,3 +2,4 @@ python-telegram-bot>=20.0
 pyotp
 pytz
 apscheduler
+python-dotenv
