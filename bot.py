@@ -14,6 +14,7 @@ import datetime
 import pytz
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes, ConversationHandler, JobQueue
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 # تمكين التسجيل
 logging.basicConfig(
@@ -808,8 +809,8 @@ def main() -> None:
     # تهيئة قاعدة البيانات
     init_db()
 
-    # إنشاء التطبيق وتمرير توكن البوت الخاص بك.
-    application = Application.builder().token(TOKEN).job_queue(JobQueue(timezone=pytz.timezone("Asia/Jerusalem"))).build()
+    # إنشاء التطبيق وتمرير توكن البوت
+    application = Application.builder().token(TOKEN).job_queue(JobQueue()).build()
 
     # إضافة معالج المحادثة للوحة المسؤول
     conv_handler = ConversationHandler(
@@ -834,11 +835,12 @@ def main() -> None:
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CallbackQueryHandler(handle_copy_code, pattern='^copy_code_'))
 
-    # إضافة وظيفة لإرسال رموز التحقق
+    # إضافة وظيفة لإرسال رموز التحقق مع تعيين المنطقة الزمنية
     job_queue = application.job_queue
+    scheduler = AsyncIOScheduler(timezone=pytz.timezone("Asia/Jerusalem"))
+    job_queue.scheduler = scheduler
     
-    # ملاحظة: في بيئة الإنتاج، ستستخدم نهجاً أكثر تطوراً
-    # لجدولة المهام. هذا تنفيذ مبسط للتوضيح.
+    # تشغيل المهمة المتكررة
     job_queue.run_repeating(send_verification_code, interval=600, first=10)  # التحقق كل 10 دقائق
 
     # تشغيل البوت حتى يضغط المستخدم على Ctrl-C
