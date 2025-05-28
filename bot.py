@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*- M2.01
+# -*- coding: utf-8 -*- M2.02
 """
 ChatGPTPlus2FABot - بوت تليجرام لإرسال رموز مصادقة 2FA
 
@@ -270,6 +270,7 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text('لوحة تحكم المسؤول:', reply_markup=reply_markup)
+    return WAITING_FOR_GROUP_ACTION
 
 # --- معالجات استعلامات الأزرار ---
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -361,7 +362,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         await query.edit_message_text(text='لوحة تحكم المسؤول:', reply_markup=reply_markup)
-        return ConversationHandler.END
+        return WAITING_FOR_GROUP_ACTION
     
     # خيارات إدارة المجموعة
     elif query.data == 'add_edit_group':
@@ -403,7 +404,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await query.edit_message_text(text=message, reply_markup=reply_markup)
         return WAITING_FOR_GROUP_ACTION
     
-    # معالجة تأكيد حذف المجموعة
+    # معالجة حذف المجموعة
     elif query.data.startswith('delete_'):
         group_id = query.data.split('_')[1]
         delete_group(group_id)
@@ -662,7 +663,7 @@ async def handle_totp_secret(update: Update, context: ContextTypes.DEFAULT_TYPE)
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text('لوحة تحكم المسؤول:', reply_markup=reply_markup)
     
-    return ConversationHandler.END
+    return WAITING_FOR_GROUP_ACTION
 
 async def handle_attempts_number(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """معالجة إدخال عدد المحاولات."""
@@ -832,18 +833,18 @@ def main() -> None:
 
     # إضافة معالجات أخرى
     application.add_handler(CommandHandler("start", start))
+    
+    # إضافة معالج منفصل للزر Copy Code
     application.add_handler(CallbackQueryHandler(handle_copy_code, pattern='^copy_code_'))
 
-    # إضافة وظيفة لإرسال رموز التحقق
-    job_queue = application.job_queue
-    
-    # ملاحظة: في بيئة الإنتاج، ستستخدم نهجاً أكثر تطوراً
-    # لجدولة المهام. هذا تنفيذ مبسط للتوضيح.
-    job_queue.run_repeating(send_verification_code, interval=60, first=10)  # التحقق كل دقيقة
+    # ملاحظة هامة: تم تعطيل الإرسال التلقائي الدوري لرموز التحقق بسبب قيود النظام الحالية.
+    # يجب على المسؤول إرسال الرسالة يدوياً أو استخدام آلية خارجية لتشغيل الإرسال الدوري.
+    # job_queue = application.job_queue
+    # job_queue.run_repeating(send_verification_code, interval=60, first=10)  # تم التعليق
 
     # تشغيل البوت حتى يضغط المستخدم على Ctrl-C
     logger.info("بدء تشغيل ChatGPTPlus2FABot...")
-    application.run_polling()
+    application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
     main()
