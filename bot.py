@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*- M2.61
+# -*- coding: utf-8 -*- M2.63
 """
 Telegram Bot (ChatGPTPlus2FABot) for managing and providing 2FA TOTP codes.
 
@@ -90,8 +90,10 @@ def load_json(filename, default_data=None):
 def save_json(filename, data):
     """Saves data to a JSON file."""
     try:
-        # Create directory if it doesn't exist
-        os.makedirs(os.path.dirname(filename), exist_ok=True)
+        # Create directory if it doesn't exist and dirname is not empty
+        dir_name = os.path.dirname(filename)
+        if dir_name:
+            os.makedirs(dir_name, exist_ok=True)
         with open(filename, 'w', encoding='utf-8') as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
     except IOError as e:
@@ -1334,11 +1336,8 @@ def main():
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
-    # Ensure data directories exist
-    os.makedirs(os.path.dirname(CONFIG_FILE), exist_ok=True)
-    os.makedirs(os.path.dirname(GROUPS_FILE), exist_ok=True)
-    os.makedirs(os.path.dirname(USER_ATTEMPTS_FILE), exist_ok=True)
-    os.makedirs(os.path.dirname(PERSISTENCE_FILE), exist_ok=True)
+    # Data files will be created by load_json/save_json if they don't exist
+    # No need to explicitly create directories here if files are in the same dir
     main()
 
 
