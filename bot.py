@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*- M2.63
+# -*- coding: utf-8 -*- M2.64
 """
 Telegram Bot (ChatGPTPlus2FABot) for managing and providing 2FA TOTP codes.
 
@@ -52,8 +52,10 @@ INITIAL_ADMIN_ID = 764559466
  MANAGE_ATTEMPTS_SELECT_GROUP, MANAGE_ATTEMPTS_SELECT_USER, MANAGE_ATTEMPTS_ACTION, 
  ADD_ATTEMPTS_COUNT, REMOVE_ATTEMPTS_COUNT,
  # Admin Management
- MANAGE_ADMINS_MENU, ADD_ADMIN_ID, DELETE_ADMIN_SELECT
-) = range(22)
+ MANAGE_ADMINS_MENU, ADD_ADMIN_ID, DELETE_ADMIN_SELECT,
+ # Interval Management (even if only for display)
+ MANAGE_INTERVAL_SELECT_GROUP, SET_INTERVAL
+) = range(24)
 
 # --- Logging Setup --- 
 logging.basicConfig(
