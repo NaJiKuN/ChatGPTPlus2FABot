@@ -1,4 +1,3 @@
-#X1.00
 import json
 import os
 import pytz
@@ -11,11 +10,12 @@ from telegram.ext import (
     CallbackQueryHandler,
     ContextTypes,
     ConversationHandler,
+    MessageHandler,
+    filters,
 )
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 import logging
-import uuid
 import re
 
 # إعداد التسجيل
@@ -59,7 +59,7 @@ INTERVALS = {
     DELETE_GROUP, SET_INTERVAL, SET_FORMAT, SET_TIMEZONE, MANAGE_ATTEMPTS_GROUP,
     MANAGE_ATTEMPTS_USER, MANAGE_ATTEMPTS_ACTION, ADD_ATTEMPTS, DELETE_ATTEMPTS,
     ADD_ADMIN, DELETE_ADMIN
-) = range(14)
+) = range(15)
 
 # وظائف مساعدة للتعامل مع JSON
 def load_json(file_path, default=None):
@@ -624,13 +624,13 @@ def main():
             CommandHandler("admin", admin_command)
         ],
         states={
-            ADD_GROUP_ID: [CommandHandler("cancel", cancel), MessageHandler(None, add_group_id)],
-            ADD_GROUP_SECRET: [CommandHandler("cancel", cancel), MessageHandler(None, add_group_secret)],
-            MODIFY_GROUP_ID: [CommandHandler("cancel", cancel), MessageHandler(None, modify_group_id)],
-            MODIFY_GROUP_SECRET: [CommandHandler("cancel", cancel), MessageHandler(None, modify_group_secret)],
-            ADD_ATTEMPTS: [CommandHandler("cancel", cancel), MessageHandler(None, add_attempts)],
-            DELETE_ATTEMPTS: [CommandHandler("cancel", cancel), MessageHandler(None, delete_attempts)],
-            ADD_ADMIN: [CommandHandler("cancel", cancel), MessageHandler(None, add_admin)]
+            ADD_GROUP_ID: [CommandHandler("cancel", cancel), MessageHandler(filters.TEXT & ~filters.COMMAND, add_group_id)],
+            ADD_GROUP_SECRET: [CommandHandler("cancel", cancel), MessageHandler(filters.TEXT & ~filters.COMMAND, add_group_secret)],
+            MODIFY_GROUP_ID: [CommandHandler("cancel", cancel), MessageHandler(filters.TEXT & ~filters.COMMAND, modify_group_id)],
+            MODIFY_GROUP_SECRET: [CommandHandler("cancel", cancel), MessageHandler(filters.TEXT & ~filters.COMMAND, modify_group_secret)],
+            ADD_ATTEMPTS: [CommandHandler("cancel", cancel), MessageHandler(filters.TEXT & ~filters.COMMAND, add_attempts)],
+            DELETE_ATTEMPTS: [CommandHandler("cancel", cancel), MessageHandler(filters.TEXT & ~filters.COMMAND, delete_attempts)],
+            ADD_ADMIN: [CommandHandler("cancel", cancel), MessageHandler(filters.TEXT & ~filters.COMMAND, add_admin)]
         },
         fallbacks=[CommandHandler("cancel", cancel)]
     )
