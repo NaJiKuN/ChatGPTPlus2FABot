@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*- M2.68
+# -*- coding: utf-8 -*- M2.69
 """
 Telegram Bot (ChatGPTPlus2FABot) for managing and providing 2FA TOTP codes.
 
@@ -1247,10 +1247,10 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
          logger.critical("Conflict error detected! Multiple bot instances might be running.")
          # Try notifying the initial admin
          try:
-             await context.bot.send_message(chat_id=INITIAL_ADMIN_ID, text=f"⚠️ *خطأ تعارض خطير!*
+             await context.bot.send_message(chat_id=INITIAL_ADMIN_ID, text=f"""⚠️ *خطأ تعارض خطير!*
 يبدو أن هناك أكثر من نسخة واحدة من البوت ({BOT_NAME}) تعمل في نفس الوقت.
 الرجاء التأكد من إيقاف جميع النسخ الإضافية لتجنب المشاكل.
-الخطأ: `{context.error}`", parse_mode=ParseMode.MARKDOWN_V2)
+الخطأ: `{context.error}`""", parse_mode=ParseMode.MARKDOWN_V2)
          except Exception as e:
              logger.error(f"Failed to send conflict error message to admin {INITIAL_ADMIN_ID}: {e}")
 
