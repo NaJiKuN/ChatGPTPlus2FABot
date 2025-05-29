@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*- M2.6000
 """
 Telegram Bot (ChatGPTPlus2FABot) for managing and providing 2FA TOTP codes.
 
