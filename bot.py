@@ -396,16 +396,7 @@ async def copy_code_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     # Decrement attempts and save
     user_data["attempts_left"] = attempts_left - 1
-    save_json(USER_ATTEMPTS_FILE, user_attempts_data)
-
-    # Send private message
-    response_message = (
-        f"🔑 رمز التحقق الخاص بك:\n`{totp_code}`\n\n"
-        f"⚠️ *هذا الرمز صالح لمدة 30 ثانية فقط\.*
-"
-        f"📉 المحاولات المتبقية: {user_data['attempts_left']}"
-    )
-    try:
+    save_json(USER_ATTEMPTS_FILE, user_attempts_dat    try:
         # Use MarkdownV2 - ensure message is escaped properly
         def escape_md(text):
              escape_chars = '_*[]()~`>#+-=|{}.!'
@@ -1202,7 +1193,7 @@ def main():
     # Use persistence to store conversation states across restarts
     persistence = PicklePersistence(filepath=PERSISTENCE_FILE)
     
-    application = Application.builder().token(BOT_TOKEN).persistence(persistence).build()
+    application = Application.builder().token(BOT_TOKEN).persistence(persistence).job_queue(None).build()
 
     # --- Conversation Handler for Admin tasks --- 
     admin_conv_handler = ConversationHandler(
