@@ -1250,7 +1250,7 @@ def main():
                     job_name = f"group_msg_{group_id_str}"
                     existing_jobs = app.job_queue.get_jobs_by_name(job_name)
                     if not existing_jobs:
-                         logger kla.info(f"Scheduling startup job for group {group_id_str} (Interval: {interval} mins)")
+                         logger.info(f"Scheduling startup job for group {group_id_str} (Interval: {interval} mins)")
                          schedule_group_message_job(dummy_context, group_id_str, interval)
                     else:
                          logger.info(f"Job {job_name} already exists, skipping startup schedule.")
