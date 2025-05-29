@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*- M2.6
+# -*- coding: utf-8 -*- M2.60
 """
 Telegram Bot (ChatGPTPlus2FABot) for managing and providing 2FA TOTP codes.
 
@@ -396,7 +396,8 @@ async def copy_code_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     # Decrement attempts and save
     user_data["attempts_left"] = attempts_left - 1
-    save_json(USER_ATTEMPTS_FILE, user_attempts_dat    try:
+    save_json(USER_ATTEMPTS_FILE, user_attempts_data)
+    try:
         # Use MarkdownV2 - ensure message is escaped properly
         def escape_md(text):
              escape_chars = '_*[]()~`>#+-=|{}.!'
