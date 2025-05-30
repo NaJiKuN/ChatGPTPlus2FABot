@@ -1,126 +1,56 @@
-# -*- coding: utf-8 -*-
+# Main bot file for ChatGPTPlus2FABot
+
+import asyncio
 import logging
 import os
-import asyncio
-from telegram import Update, BotCommand
-from telegram.ext import (
-    Application,
-    ApplicationBuilder,
-    CommandHandler,
-    ContextTypes,
-    PicklePersistence,
-    Defaults
-)
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from apscheduler.triggers.interval import IntervalTrigger
-import pytz # Required for scheduler timezone
+from dotenv import load_dotenv
 
-from utils import load_groups, load_config, load_users, CONFIG_FILE, GROUPS_FILE, USERS_FILE
-from handlers.admin import admin_command, cancel_admin_conversation
-from handlers.callback_query import get_admin_conversation_handler, get_copy_code_handler
-from handlers.scheduled_message import send_scheduled_message
+from aiogram import Bot, Dispatcher, F
+from aiogram.fsm.storage.memory import MemoryStorage
 
-# Enable logging
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
-)
-logging.getLogger("httpx").setLevel(logging.WARNING)
-logger = logging.getLogger(__name__)
+# Import handlers
+from handlers import commands, callback_query, admin # We will create admin and callback_query logic later
+from utils import load_config, load_groups, load_users, logger # Use the logger from utils
 
-# --- Bot Configuration --- #
-# It is STRONGLY recommended to use environment variables for the token
-# TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
-TOKEN = "8119053401:AAHuqgTkiq6M8rT9VSHYEnIl96BHt9lXIZM" # As requested by user
-BOT_NAME = "ChatGPTPlus2FABot"
-PROJECT_DIR = "/home/ec2-user/projects/ChatGPTPlus2FABot" # Changed from ec2-user as per sandbox env
-PERSISTENCE_FILE = os.path.join(PROJECT_DIR, "bot_persistence.pickle")
+# Load environment variables (especially the bot token)
+load_dotenv()
 
-async def post_init(application: Application) -> None:
-    """Post-initialization function to set bot commands and schedule jobs."""
-    logger.info("Running post_init...")
-    # Set bot commands
-    await application.bot.set_my_commands([
-        BotCommand("admin", "الوصول إلى لوحة تحكم المسؤول")
-    ])
-    logger.info("Bot commands set.")
+async def main():
+    """Initializes and starts the bot."""
+    # Load initial data
+    config_data = load_config()
+    groups_data = load_groups()
+    users_data = load_users()
 
-    # Initialize and start the scheduler
-    scheduler = AsyncIOScheduler(timezone=pytz.utc) # Use UTC for the scheduler itself
-    application.bot_data["scheduler"] = scheduler
-
-    # Load existing groups and schedule jobs
-    groups = load_groups()
-    logger.info(f"Loaded {len(groups)} groups from {GROUPS_FILE}.")
-    for group_id_str, config in groups.items():
-        try:
-            group_id = int(group_id_str)
-            if config.get("active", False) and config.get("secret") and config.get("interval_minutes"):
-                interval = config["interval_minutes"]
-                job_id = config.get("job_id", f"job_{group_id}")
-                scheduler.add_job(
-                    send_scheduled_message,
-                    trigger=IntervalTrigger(minutes=interval),
-                    args=[application, group_id],
-                    id=job_id,
-                    replace_existing=True,
-                    misfire_grace_time=60 # Allow 1 minute grace time
-                )
-                logger.info(f"Scheduled job {job_id} for active group {group_id} with interval {interval} minutes.")
-            else:
-                logger.info(f"Skipping scheduling for inactive/incomplete group {group_id}.")
-        except ValueError:
-            logger.error(f"Invalid group ID found in groups.json: {group_id_str}")
-        except Exception as e:
-            logger.error(f"Error scheduling job for group {group_id_str} on startup: {e}")
-
-    if scheduler.get_jobs():
-        scheduler.start()
-        logger.info("Scheduler started with existing jobs.")
-    else:
-        # Start the scheduler even if no jobs initially, it might get jobs later
-        scheduler.start()
-        logger.info("Scheduler started (no initial jobs).")
-
-def main() -> None:
-    """Start the bot."""
-    if not TOKEN:
-        logger.error("Telegram bot token not found. Please set the TELEGRAM_BOT_TOKEN environment variable.")
+    # It's good practice to load the token from environment variables
+    # TOKEN = "8119053401:AAHuqgTkiq6M8rT9VSHYEnIl96BHt9lXIZM" # Direct token as requested, but not recommended
+    bot_token = os.getenv("TELEGRAM_BOT_TOKEN", "8119053401:AAHuqgTkiq6M8rT9VSHYEnIl96BHt9lXIZM")
+    if not bot_token:
+        logger.critical("Bot token not found. Please set TELEGRAM_BOT_TOKEN environment variable or add it directly to bot.py (not recommended).")
         return
 
-    # Ensure data files exist (handled by load_json in utils, but good practice)
-    load_config()
-    load_groups()
-    load_users()
+    # Initialize bot and dispatcher
+    # Using MemoryStorage for FSM, consider Redis or other persistent storage for production
+    storage = MemoryStorage()
+    bot = Bot(token=bot_token)
+    dp = Dispatcher(storage=storage)
 
-    # Create persistence object
-    persistence = PicklePersistence(filepath=PERSISTENCE_FILE)
+    # Pass loaded data to the dispatcher context if needed, or handlers can load it themselves via utils
+    # dp["config_data"] = config_data
+    # dp["groups_data"] = groups_data
+    # dp["users_data"] = users_data
 
-    # Set default parse mode
-    defaults = Defaults(parse_mode="MarkdownV2")
-    # Build the application
-    application = (
-        ApplicationBuilder()
-        .token(TOKEN)
-        .persistence(persistence)
-        .defaults(defaults)
-        .post_init(post_init)
-        .build()
-    )
+    # Register routers
+    dp.include_router(commands.router)
+    dp.include_router(admin.router) # Will be created later
+    dp.include_router(callback_query.router) # Will be created later
 
-    # Get handlers
-    admin_handler = get_admin_conversation_handler()
-    copy_code_handler = get_copy_code_handler()
-
-    # Add handlers
-    application.add_handler(admin_handler)
-    application.add_handler(copy_code_handler)
-
-    # Start the Bot
-    logger.info(f"Starting bot {BOT_NAME}...")
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
+    logger.info("Starting bot...")
+    # Start polling
+    # Make sure to delete webhook if it was set previously
+    await bot.delete_webhook(drop_pending_updates=True)
+    await dp.start_polling(bot)
 
 if __name__ == "__main__":
-    # Note: python-telegram-bot's run_polling handles the asyncio loop.
-    # We call the main function which sets up and runs the polling.
-    main()
+    asyncio.run(main())
 
