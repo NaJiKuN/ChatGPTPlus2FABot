@@ -1,4 +1,4 @@
-#M3.02
+#M3.04
 import logging
 import datetime
 import pytz
@@ -42,6 +42,18 @@ async def send_periodic_message(context: ContextTypes.DEFAULT_TYPE):
     job = context.job
     group_id = job.data["group_id"]
     
+    # التحقق من عضوية البوت في المجموعة
+    try:
+        chat_member = await context.bot.get_chat_member(group_id, context.bot.id)
+        if chat_member.status in ["left", "kicked"]:
+            logger.warning(f"البوت ليس عضواً في المجموعة {group_id}. إلغاء تفعيل المجموعة.")
+            db.update_group_status(group_id, False)
+            return
+    except TelegramError as e:
+        logger.error(f"خطأ في التحقق من عضوية البوت في المجموعة {group_id}: {e}")
+        db.update_group_status(group_id, False)
+        return
+    
     # الحصول على إعدادات المجموعة
     group_settings = db.get_group_settings(group_id)
     if not group_settings:
@@ -57,6 +69,7 @@ async def send_periodic_message(context: ContextTypes.DEFAULT_TYPE):
     totp_secret = group_settings["totp_secret"]
     message_format = group_settings["message_format"]
     timezone_str = group_settings["timezone"]
+    time_format = group_settings["time_format"]
     
     try:
         # محاولة الحصول على المنطقة الزمنية
@@ -68,7 +81,9 @@ async def send_periodic_message(context: ContextTypes.DEFAULT_TYPE):
     # الحصول على الوقت الحالي والوقت المتبقي
     now = datetime.datetime.now(timezone)
     remaining_seconds = totp.get_remaining_seconds()
-    next_code_time = (now + datetime.timedelta(seconds=remaining_seconds)).strftime("%H:%M:%S")
+    next_code_time_dt = now + datetime.timedelta(seconds=remaining_seconds)
+    time_format_str = "%I:%M:%S %p" if time_format == "12" else "%H:%M:%S"
+    next_code_time = next_code_time_dt.strftime(time_format_str)
     
     # إنشاء نص الرسالة حسب التنسيق المختار
     if message_format == 1:
@@ -76,7 +91,7 @@ async def send_periodic_message(context: ContextTypes.DEFAULT_TYPE):
     elif message_format == 2:
         message_text = f"🔐 *رمز المصادقة التالي في الساعة:* `{next_code_time}`\n⏱ *المدة المتبقية للرمز الحالي:* `{remaining_seconds} ثانية`"
     elif message_format == 3:
-        current_time = now.strftime("%H:%M:%S")
+        current_time = now.strftime(time_format_str)
         message_text = f"🔐 *رمز المصادقة التالي في الساعة:* `{next_code_time}`\n🕒 *الوقت الحالي:* `{current_time}`"
     else:
         message_text = f"🔐 *رمز المصادقة متاح الآن*"
@@ -98,7 +113,6 @@ async def send_periodic_message(context: ContextTypes.DEFAULT_TYPE):
         logger.info(f"تم إرسال رسالة دورية إلى المجموعة {group_id}")
     except TelegramError as e:
         logger.error(f"خطأ في إرسال رسالة دورية إلى المجموعة {group_id}: {e}")
-        # إذا كان الخطأ بسبب عدم وجود البوت في المجموعة، يمكن إلغاء تفعيل المجموعة هنا
         if "bot is not a member" in str(e).lower() or "chat not found" in str(e).lower():
             logger.warning(f"البوت ليس عضواً في المجموعة {group_id}. إلغاء تفعيل المجموعة.")
             db.update_group_status(group_id, False)
@@ -136,6 +150,17 @@ def schedule_periodic_message(application, group_id):
     db.update_group_job_id(group_id, job_id)
     logger.info(f"تمت جدولة مهمة جديدة للمجموعة {group_id} بمعرف {job_id} وفترة {interval_minutes} دقيقة")
     return True
+
+async def reset_attempts_at_midnight(context: ContextTypes.DEFAULT_TYPE):
+    """إعادة تعيين محاولات المستخدمين إلى الحد الافتراضي عند منتصف الليل."""
+    groups = db.get_all_groups()
+    for group in groups:
+        group_id = group["group_id"]
+        success, message = db.reset_all_user_attempts(group_id)
+        if success:
+            logger.info(f"تم إعادة تعيين محاولات المستخدمين للمجموعة {group_id} عند منتصف الليل")
+        else:
+            logger.error(f"فشل في إعادة تعيين محاولات المستخدمين للمجموعة {group_id}: {message}")
 
 # معالجات الأوامر
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -378,6 +403,25 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=kb.format_options_keyboard(group_id)
         )
     
+    elif data.startswith("format_set_time:"):
+        parts = data.split(":")
+        group_id = parts[1]
+        time_format = parts[2]
+        
+        # الحصول على شكل الرسالة والمنطقة الزمنية الحالية
+        group_settings = db.get_group_settings(group_id)
+        format_id = group_settings["message_format"] if group_settings else 1
+        timezone = group_settings["timezone"] if group_settings else "GMT"
+        
+        success, message = db.update_group_time_format(group_id, time_format, format_id, timezone)
+        
+        await query.edit_message_text(
+            f"نتيجة تحديث تنسيق الوقت: {message}\n"
+            f"تنسيق الوقت الجديد: {'12 ساعة' if time_format == '12' else '24 ساعة'}\n\n"
+            "اختر إجراءً آخر:",
+            reply_markup=kb.format_options_keyboard(group_id)
+        )
+    
     # معالجة أزرار إدارة محاولات المستخدمين
     elif data.startswith("attempts_select_group:"):
         group_id = data.split(":")[1]
@@ -488,7 +532,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         
         if attempts_left <= 0:
-            await query.answer(f"⚠️ لقد استنفدت محاولاتك ({group_settings['max_attempts']}) لنسخ الرمز لهذه المجموعة.", show_alert=True)
+            await query.answer(f"⚠️ لقد استنفدت محاولاتك. المحاولات المتبقية: 0\nسيتم تحديث المحاولات عند منتصف الليل.", show_alert=True)
             return
         
         # توليد رمز TOTP
@@ -502,6 +546,12 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # الحصول على عدد المحاولات المتبقية بعد التقليل
         new_attempts_left, _ = db.get_user_attempts(user_id, group_id)
         
+        # إرسال إشعار بعد الضغط على الزر
+        if new_attempts_left > 0:
+            await query.answer(f"تم نسخ الرمز! المحاولات المتبقية: {new_attempts_left}", show_alert=True)
+        else:
+            await query.answer(f"تم نسخ الرمز! المحاولات المتبقية: 0\nسيتم تحديث المحاولات عند منتصف الليل.", show_alert=True)
+        
         # إرسال الرمز في رسالة خاصة
         try:
             await context.bot.send_message(
@@ -512,7 +562,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                      f"⚠️ *تنبيه:* هذا الرمز صالح لمدة 30 ثانية فقط.",
                 parse_mode=ParseMode.MARKDOWN
             )
-            await query.answer("تم إرسال الرمز إليك في رسالة خاصة.", show_alert=True)
+            # تم إرسال الإشعار كجزء من query.answer أعلاه
         except TelegramError as e:
             logger.error(f"خطأ في إرسال الرمز إلى المستخدم {user_id}: {e}")
             await query.answer("عذراً، لم نتمكن من إرسال الرمز إليك. يرجى بدء محادثة مع البوت أولاً.", show_alert=True)
@@ -856,15 +906,31 @@ async def post_init(application: Application):
     await application.bot.set_my_commands(commands)
     logger.info("تم تعيين أوامر البوت.")
     
+    # إرسال إشعار إلى المسؤول الأولي
+    try:
+        await application.bot.send_message(
+            chat_id=config.INITIAL_ADMIN_ID,
+            text="✅ تم تشغيل بوت ChatGPTPlus2FABot بنجاح!"
+        )
+        logger.info(f"تم إرسال إشعار بدء التشغيل إلى المسؤول {config.INITIAL_ADMIN_ID}")
+    except TelegramError as e:
+        logger.error(f"خطأ في إرسال إشعار بدء التشغيل: {e}")
+    
     # تحميل المهام المجدولة للمجموعات النشطة
     logger.info("جاري تحميل المهام المجدولة للمجموعات النشطة...")
     groups = db.get_all_groups()
     active_groups = [group for group in groups if group["is_active"]]
-    
     for group in active_groups:
         schedule_periodic_message(application, group["group_id"])
-    
     logger.info(f"تم تحميل وجدولة المهام لـ {len(active_groups)} مجموعة نشطة.")
+    
+    # جدولة إعادة تعيين المحاولات عند منتصف الليل
+    application.job_queue.run_daily(
+        reset_attempts_at_midnight,
+        time=datetime.time(hour=0, minute=0, tzinfo=pytz.timezone("GMT")),
+        data={}
+    )
+    logger.info("تم جدولة إعادة تعيين محاولات المستخدمين عند منتصف الليل")
 
 def main():
     """النقطة الرئيسية لتشغيل البوت."""
@@ -901,6 +967,10 @@ def main():
         entry_points=[
             CallbackQueryHandler(add_attempts_start, pattern="^attempts_add:"),
             CallbackQueryHandler(remove_attempts_start, pattern="^attempts_remove:"),
+            CallbackQueryHandler(lambda u, c: u.callback_query.answer() or u.callback_query.edit_message_text(
+                f"تعديل الحد الافتراضي للمحاولات للمجموعة: {u.callback_query.data.split(':')[1]} ⚙️\n"
+                "يرجى إدخال العدد الأقصى للمحاولات الذي سيحصل عليه المستخدمون الجدد في هذه المجموعة:"
+            ) or WAITING_FOR_MAX_ATTEMPTS, pattern="^attempts_set_default:"),
         ],
         states={
             WAITING_FOR_ADD_ATTEMPTS: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_attempts)],
