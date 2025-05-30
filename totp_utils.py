@@ -1,53 +1,55 @@
-import pyotp
+import base64
+import hmac
+import struct
 import time
-import re
 
 def validate_totp_secret(secret):
-    """
-    التحقق من صحة المفتاح السري TOTP.
-    
-    Args:
-        secret (str): المفتاح السري المراد التحقق منه.
-        
-    Returns:
-        bool: True إذا كان المفتاح صالحاً، False خلاف ذلك.
-    """
-    # التحقق من أن المفتاح ليس فارغاً
-    if not secret or not isinstance(secret, str):
-        return False
-    
-    # التحقق من أن المفتاح يحتوي على أحرف صالحة فقط (Base32)
-    if not re.match(r'^[A-Z2-7]+$', secret.upper()):
-        return False
-    
-    # محاولة إنشاء كائن TOTP
+    """Validates if the provided TOTP secret is a valid base32 string."""
     try:
-        totp = pyotp.TOTP(secret.upper())
-        # محاولة توليد رمز للتأكد من أن المفتاح صالح
-        totp.now()
+        secret = secret.replace(" ", "").upper()  # Remove spaces and convert to uppercase
+        base64.b32decode(secret, casefold=True)  # Try decoding to check if valid base32
         return True
     except Exception:
         return False
 
-def generate_totp(secret):
-    """
-    توليد رمز TOTP باستخدام المفتاح السري.
-    
-    Args:
-        secret (str): المفتاح السري TOTP.
-        
-    Returns:
-        str: رمز TOTP المولد.
-    """
-    totp = pyotp.TOTP(secret.upper())
-    return totp.now()
+def generate_totp(secret, interval=30):
+    """Generates a TOTP code based on the provided secret."""
+    try:
+        # Decode the base32 secret
+        secret = secret.replace(" ", "").upper()
+        key = base64.b32decode(secret, casefold=True)
 
-def get_remaining_seconds():
-    """
-    حساب عدد الثواني المتبقية حتى توليد الرمز التالي.
-    
-    Returns:
-        int: عدد الثواني المتبقية.
-    """
-    # TOTP يتغير كل 30 ثانية بشكل افتراضي
-    return 30 - int(time.time()) % 30
+        # Get the current timestamp and calculate the time step
+        timestamp = int(time.time())
+        counter = timestamp // interval
+
+        # Pack the counter into a byte string
+        msg = struct.pack(">Q", counter)
+
+        # Generate HMAC-SHA1 hash
+        hash_obj = hmac.new(key, msg, "sha1")
+        hmac_hash = hash_obj.digest()
+
+        # Dynamic truncation: Get the last 4 bits of the hash to determine the offset
+        offset = hmac_hash[-1] & 0x0F
+
+        # Extract 4 bytes starting from the offset
+        binary_code = (
+            (hmac_hash[offset] & 0x7F) << 24 |
+            (hmac_hash[offset + 1] & 0xFF) << 16 |
+            (hmac_hash[offset + 2] & 0xFF) << 8 |
+            (hmac_hash[offset + 3] & 0xFF)
+        )
+
+        # Generate a 6-digit code
+        code = binary_code % 1000000
+        return f"{code:06d}"  # Ensure the code is 6 digits with leading zeros
+    except Exception as e:
+        print(f"Error generating TOTP: {e}")
+        return None
+
+def get_remaining_seconds(interval=30):
+    """Calculates the remaining seconds until the next TOTP code."""
+    timestamp = int(time.time())
+    elapsed = timestamp % interval
+    return interval - elapsed
