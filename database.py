@@ -64,7 +64,7 @@ def initialize_database():
         except sqlite3.Error as e:
             conn.rollback()
             logger.error(f"Database initialization error: {e}")
-            return False, "حدث خطأ أثناء تهيئة قاعدة البيانات. يرجى التحقق من إعدادات قاعدة البيانات أو المحاولة مرة أخرى لاحقًا."
+            return False, f"حدث خطأ أثناء تهيئة قاعدة البيانات: {str(e)}. يرجى التحقق من إعدادات قاعدة البيانات أو المحاولة مرة أخرى لاحقًا."
 
 # --- Admin Management ---
 def is_admin(user_id):
@@ -82,16 +82,16 @@ def add_admin(user_id):
         try:
             cursor.execute("INSERT INTO admins (user_id) VALUES (?)", (user_id,))
             conn.commit()
-            logger.info(f"Admin {user_id} added.")
+            logger.info(f"Admin {user_id} added successfully.")
             return True, "تمت إضافة المسؤول بنجاح."
         except sqlite3.IntegrityError:
             conn.rollback()
-            logger.warning(f"محاولة إضافة مسؤول موجود مسبقًا: {user_id}")
+            logger.warning(f"Attempted to add an already existing admin: {user_id}")
             return False, "المستخدم مسؤول بالفعل أو حدث خطأ في التكرار."
         except sqlite3.Error as e:
             conn.rollback()
-            logger.error(f"خطأ في إضافة المسؤول {user_id}: {e}")
-            return False, "حدث خطأ أثناء إضافة المسؤول. يرجى التحقق من قاعدة البيانات أو المحاولة مرة أخرى لاحقًا."
+            logger.error(f"Error adding admin {user_id}: {e}")
+            return False, f"حدث خطأ أثناء إضافة المسؤول: {str(e)}. يرجى التحقق من قاعدة البيانات أو المحاولة مرة أخرى لاحقًا."
 
 def remove_admin(user_id):
     if not is_admin(user_id):
@@ -104,7 +104,7 @@ def remove_admin(user_id):
             cursor.execute("DELETE FROM admins WHERE user_id = ?", (user_id,))
             conn.commit()
             if cursor.rowcount > 0:
-                logger.info(f"Admin {user_id} removed.")
+                logger.info(f"Admin {user_id} removed successfully.")
                 return True, "تمت إزالة المسؤول بنجاح."
             else:
                 logger.warning(f"Attempted to remove non-existent or initial admin {user_id} after initial check.")
@@ -112,14 +112,18 @@ def remove_admin(user_id):
         except sqlite3.Error as e:
             conn.rollback()
             logger.error(f"Error removing admin {user_id}: {e}")
-            return False, "حدث خطأ أثناء إزالة المسؤول. يرجى التحقق من قاعدة البيانات أو المحاولة مرة أخرى لاحقًا."
+            return False, f"حدث خطأ أثناء إزالة المسؤول: {str(e)}. يرجى التحقق من قاعدة البيانات أو المحاولة مرة أخرى لاحقًا."
 
 def get_all_admins():
     with get_db_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT user_id FROM admins")
-        admins = [row["user_id"] for row in cursor.fetchall()]
-        return admins
+        try:
+            cursor.execute("SELECT user_id FROM admins")
+            admins = [row["user_id"] for row in cursor.fetchall()]
+            return admins
+        except sqlite3.Error as e:
+            logger.error(f"Error retrieving admins: {e}")
+            return []
 
 # --- Group Management ---
 def add_or_update_group(group_id, totp_secret, interval_minutes=10, message_format=1, timezone='Asia/Jerusalem', max_attempts=3, is_active=True, job_id=None, time_format='24'):
@@ -133,11 +137,3 @@ def add_or_update_group(group_id, totp_secret, interval_minutes=10, message_form
                     totp_secret=excluded.totp_secret,
                     interval_minutes=excluded.interval_minutes,
                     message_format=excluded.message_format,
-                    timezone=excluded.timezone,
-                    max_attempts=excluded.max_attempts,
-                    is_active=excluded.is_active,
-                    job_id=excluded.job_id,
-                    time_format=excluded.time_format
-            """, (group_id, totp_secret, interval_minutes, message_format, timezone, max_attempts, is_active, job_id, time_format))
-            conn.commit()
-            logger.info
