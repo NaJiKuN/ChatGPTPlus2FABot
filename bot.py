@@ -1,4 +1,4 @@
-# /home/ec2-user/projects/ChatGPTPlus2FABot/bot.py M3.01
+#M3.02
 import logging
 import datetime
 import pytz
