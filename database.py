@@ -1,4 +1,3 @@
-# /home/ec2-user/projects/ChatGPTPlus2FABot/database.py
 import sqlite3
 import logging
 from config import DB_NAME, INITIAL_ADMIN_ID
