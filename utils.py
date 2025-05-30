@@ -6,9 +6,9 @@ import pytz
 from datetime import datetime, timedelta
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
-CONFIG_FILE = '/home/ubuntu/ChatGPTPlus2FABot/config.json'
-GROUPS_FILE = '/home/ubuntu/ChatGPTPlus2FABot/groups.json'
-USERS_FILE = '/home/ubuntu/ChatGPTPlus2FABot/users.json'
+CONFIG_FILE = '/home/ec2-user/projects/ChatGPTPlus2FABot/config.json'
+GROUPS_FILE = '/home/ec2-user/projects/ChatGPTPlus2FABot/groups.json'
+USERS_FILE = '/home/ec2-user/projects/ChatGPTPlus2FABot/users.json'
 
 # --- JSON Data Handling ---
 def load_json(file_path, default_data):
