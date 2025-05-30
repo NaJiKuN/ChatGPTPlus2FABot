@@ -1,4 +1,3 @@
-# /home/ec2-user/projects/ChatGPTPlus2FABot/totp_utils.py
 import pyotp
 import time
 import re
