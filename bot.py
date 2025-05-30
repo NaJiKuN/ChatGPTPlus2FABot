@@ -13,7 +13,7 @@ from telegram.ext import (
 )
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
-import pytz # Required for scheduler timezone
+import pytz  # Required for scheduler timezone
 
 from utils import load_groups, load_config, load_users, CONFIG_FILE, GROUPS_FILE, USERS_FILE
 from handlers.admin import admin_command, cancel_admin_conversation
@@ -30,11 +30,12 @@ logger = logging.getLogger(__name__)
 # --- Bot Configuration --- #
 # It is STRONGLY recommended to use environment variables for the token
 # TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
-TOKEN = "8119053401:AAHuqgTkiq6M8rT9VSHYEnIl96BHt9lXIZM" # As requested by user
+TOKEN = "8119053401:AAHuqgTkiq6M8rT9VSHYEnIl96BHt9lXIZM"  # As requested by user
 BOT_NAME = "ChatGPTPlus2FABot"
-PROJECT_DIR = "/home/ec2-user/projects/ChatGPTPlus2FABot" # Changed from ec2-user as per sandbox env
-PERSISTENCE_FILE = os.path.join(PROJECT_DIR, "bot_persistence.pickle"
+PROJECT_DIR = "/home/ec2-user/projects/ChatGPTPlus2FABot"  # Updated path as per EC2 environment
+PERSISTENCE_FILE = os.path.join(PROJECT_DIR, "bot_persistence.pickle")
 
+# Ensure async function is defined at the top level
 async def post_init(application: Application) -> None:
     """Post-initialization function to set bot commands and schedule jobs."""
     logger.info("Running post_init...")
@@ -45,7 +46,7 @@ async def post_init(application: Application) -> None:
     logger.info("Bot commands set.")
 
     # Initialize and start the scheduler
-    scheduler = AsyncIOScheduler(timezone=pytz.utc) # Use UTC for the scheduler itself
+    scheduler = AsyncIOScheduler(timezone=pytz.utc)  # Use UTC for the scheduler itself
     application.bot_data["scheduler"] = scheduler
 
     # Load existing groups and schedule jobs
@@ -63,7 +64,7 @@ async def post_init(application: Application) -> None:
                     args=[application, group_id],
                     id=job_id,
                     replace_existing=True,
-                    misfire_grace_time=60 # Allow 1 minute grace time
+                    misfire_grace_time=60  # Allow 1 minute grace time
                 )
                 logger.info(f"Scheduled job {job_id} for active group {group_id} with interval {interval} minutes.")
             else:
@@ -123,4 +124,3 @@ if __name__ == "__main__":
     # Note: python-telegram-bot's run_polling handles the asyncio loop.
     # We call the main function which sets up and runs the polling.
     main()
-
