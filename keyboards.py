@@ -92,6 +92,7 @@ def format_options_keyboard(group_id):
     group = db.get_group_settings(group_id)
     current_format = group["message_format"] if group else 1
     current_tz = group["timezone"] if group else "GMT"
+    current_time_format = group["time_format"] if group else "24"
 
     keyboard = [
         [InlineKeyboardButton("-- اختر شكل الرسالة --", callback_data="no_op")],
@@ -101,6 +102,9 @@ def format_options_keyboard(group_id):
         [InlineKeyboardButton("-- اختر المنطقة الزمنية --", callback_data="no_op")],
         [InlineKeyboardButton(f"{'✅ ' if current_tz == 'GMT' else ''}توقيت غرينتش (GMT)", callback_data=f"format_set_tz:{group_id}:GMT")],
         [InlineKeyboardButton(f"{'✅ ' if current_tz == 'Asia/Gaza' else ''}توقيت غزة (Asia/Gaza)", callback_data=f"format_set_tz:{group_id}:Asia/Gaza")],
+        [InlineKeyboardButton("-- اختر تنسيق الوقت --", callback_data="no_op")],
+        [InlineKeyboardButton(f"{'✅ ' if current_time_format == '24' else ''}نظام 24 ساعة", callback_data=f"format_set_time:{group_id}:24")],
+        [InlineKeyboardButton(f"{'✅ ' if current_time_format == '12' else ''}نظام 12 ساعة", callback_data=f"format_set_time:{group_id}:12")],
         [InlineKeyboardButton("🔙 رجوع لاختيار مجموعة", callback_data="admin_manage_format")]
     ]
     return InlineKeyboardMarkup(keyboard)
@@ -198,4 +202,3 @@ def back_keyboard(callback_data):
         [InlineKeyboardButton("🔙 رجوع", callback_data=callback_data)]
     ]
     return InlineKeyboardMarkup(keyboard)
-
