@@ -1,4 +1,4 @@
-#M3.04
+#M3.05
 import logging
 import datetime
 import pytz
@@ -75,8 +75,8 @@ async def send_periodic_message(context: ContextTypes.DEFAULT_TYPE):
         # محاولة الحصول على المنطقة الزمنية
         timezone = pytz.timezone(timezone_str)
     except pytz.exceptions.UnknownTimeZoneError:
-        logger.warning(f"منطقة زمنية غير معروفة {group_settings['timezone']} للمجموعة {group_settings['group_id']}. استخدام GMT كافتراضي.")
-        timezone = pytz.timezone("GMT")
+        logger.warning(f"منطقة زمنية غير معروفة {timezone_str} للمجموعة {group_id}. استخدام Asia/Jerusalem كافتراضي.")
+        timezone = pytz.timezone("Asia/Jerusalem")
     
     # الحصول على الوقت الحالي والوقت المتبقي
     now = datetime.datetime.now(timezone)
@@ -152,15 +152,26 @@ def schedule_periodic_message(application, group_id):
     return True
 
 async def reset_attempts_at_midnight(context: ContextTypes.DEFAULT_TYPE):
-    """إعادة تعيين محاولات المستخدمين إلى الحد الافتراضي عند منتصف الليل."""
+    """إعادة تعيين محاولات المستخدمين إلى الحد الافتراضي عند منتصف الليل بتوقيت المجموعة."""
     groups = db.get_all_groups()
     for group in groups:
         group_id = group["group_id"]
-        success, message = db.reset_all_user_attempts(group_id)
-        if success:
-            logger.info(f"تم إعادة تعيين محاولات المستخدمين للمجموعة {group_id} عند منتصف الليل")
-        else:
-            logger.error(f"فشل في إعادة تعيين محاولات المستخدمين للمجموعة {group_id}: {message}")
+        timezone_str = group["timezone"]
+        
+        try:
+            timezone = pytz.timezone(timezone_str)
+        except pytz.exceptions.UnknownTimeZoneError:
+            logger.warning(f"منطقة زمنية غير معروفة {timezone_str} للمجموعة {group_id}. استخدام Asia/Jerusalem.")
+            timezone = pytz.timezone("Asia/Jerusalem")
+        
+        # التأكد من أن الوقت الحالي هو منتصف الليل بتوقيت المجموعة
+        now = datetime.datetime.now(timezone)
+        if now.hour == 0 and now.minute == 0:
+            success, message = db.reset_all_user_attempts(group_id)
+            if success:
+                logger.info(f"تم إعادة تعيين محاولات المستخدمين للمجموعة {group_id} عند منتصف الليل بتوقيت {timezone_str}")
+            else:
+                logger.error(f"فشل في إعادة تعيين محاولات المستخدمين للمجموعة {group_id}: {message}")
 
 # معالجات الأوامر
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -374,9 +385,10 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # الحصول على المنطقة الزمنية الحالية
         group_settings = db.get_group_settings(group_id)
-        timezone = group_settings["timezone"] if group_settings else "GMT"
+        timezone = group_settings["timezone"] if group_settings else "Asia/Jerusalem"
+        time_format = group_settings["time_format"] if group_settings else "24"
         
-        success, message = db.update_group_message_format(group_id, format_id, timezone)
+        success, message = db.update_group_message_format(group_id, format_id, timezone, time_format)
         
         await query.edit_message_text(
             f"نتيجة تحديث شكل الرسالة: {message}\n"
@@ -393,8 +405,9 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # الحصول على شكل الرسالة الحالي
         group_settings = db.get_group_settings(group_id)
         format_id = group_settings["message_format"] if group_settings else 1
+        time_format = group_settings["time_format"] if group_settings else "24"
         
-        success, message = db.update_group_message_format(group_id, format_id, timezone)
+        success, message = db.update_group_message_format(group_id, format_id, timezone, time_format)
         
         await query.edit_message_text(
             f"نتيجة تحديث المنطقة الزمنية: {message}\n"
@@ -411,9 +424,9 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # الحصول على شكل الرسالة والمنطقة الزمنية الحالية
         group_settings = db.get_group_settings(group_id)
         format_id = group_settings["message_format"] if group_settings else 1
-        timezone = group_settings["timezone"] if group_settings else "GMT"
+        timezone = group_settings["timezone"] if group_settings else "Asia/Jerusalem"
         
-        success, message = db.update_group_time_format(group_id, time_format, format_id, timezone)
+        success, message = db.update_group_message_format(group_id, format_id, timezone, time_format)
         
         await query.edit_message_text(
             f"نتيجة تحديث تنسيق الوقت: {message}\n"
@@ -924,13 +937,13 @@ async def post_init(application: Application):
         schedule_periodic_message(application, group["group_id"])
     logger.info(f"تم تحميل وجدولة المهام لـ {len(active_groups)} مجموعة نشطة.")
     
-    # جدولة إعادة تعيين المحاولات عند منتصف الليل
-    application.job_queue.run_daily(
+    # جدولة إعادة تعيين المحاولات كل دقيقة للتحقق من منتصف الليل بتوقيت كل مجموعة
+    application.job_queue.run_repeating(
         reset_attempts_at_midnight,
-        time=datetime.time(hour=0, minute=0, tzinfo=pytz.timezone("GMT")),
+        interval=datetime.timedelta(minutes=1),
         data={}
     )
-    logger.info("تم جدولة إعادة تعيين محاولات المستخدمين عند منتصف الليل")
+    logger.info("تم جدولة التحقق من إعادة تعيين محاولات المستخدمين كل دقيقة")
 
 def main():
     """النقطة الرئيسية لتشغيل البوت."""
