@@ -20,6 +20,7 @@ from utils import load_groups, load_config, load_users, CONFIG_FILE, GROUPS_FILE
 from handlers.admin import admin_command, cancel_admin_conversation
 from handlers.callback_query import get_admin_conversation_handler, get_copy_code_handler
 from handlers.scheduled_message import send_scheduled_message
+from telegram.request import HTTPXRequest
 
 # Enable logging
 logging.basicConfig(
@@ -127,7 +128,6 @@ def main() -> None:
         .defaults(defaults)
         .post_init(post_init)
         .post_shutdown(shutdown_scheduler)  # Only use supported hooks
-        .get_updates_timeout(30)  # زيادة الـ timeout إلى 30 ثانية (الافتراضي هو 10 ثوانٍ)
         .build()
     )
 
