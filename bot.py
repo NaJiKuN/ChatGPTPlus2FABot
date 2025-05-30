@@ -127,6 +127,7 @@ def main() -> None:
         .defaults(defaults)
         .post_init(post_init)
         .post_shutdown(shutdown_scheduler)  # Only use supported hooks
+        .get_updates_timeout(30)  # زيادة الـ timeout إلى 30 ثانية (الافتراضي هو 10 ثوانٍ)
         .build()
     )
 
