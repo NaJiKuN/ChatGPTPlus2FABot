@@ -2,6 +2,7 @@
 import logging
 import os
 import asyncio
+import fcntl  # For file locking
 from telegram import Update, BotCommand
 from telegram.ext import (
     Application,
@@ -34,6 +35,7 @@ TOKEN = "8119053401:AAHuqgTkiq6M8rT9VSHYEnIl96BHt9lXIZM"  # As requested by user
 BOT_NAME = "ChatGPTPlus2FABot"
 PROJECT_DIR = "/home/ec2-user/projects/ChatGPTPlus2FABot"  # Updated path as per EC2 environment
 PERSISTENCE_FILE = os.path.join(PROJECT_DIR, "bot_persistence.pickle")
+LOCK_FILE = os.path.join(PROJECT_DIR, "bot.lock")  # File to ensure single instance
 
 # Ensure async function is defined at the top level
 async def post_init(application: Application) -> None:
@@ -45,9 +47,8 @@ async def post_init(application: Application) -> None:
     ])
     logger.info("Bot commands set.")
 
-    # Initialize and start the scheduler
+    # Initialize and start the scheduler (do not store in bot_data)
     scheduler = AsyncIOScheduler(timezone=pytz.utc)  # Use UTC for the scheduler itself
-    application.bot_data["scheduler"] = scheduler
 
     # Load existing groups and schedule jobs
     groups = load_groups()
@@ -82,8 +83,28 @@ async def post_init(application: Application) -> None:
         scheduler.start()
         logger.info("Scheduler started (no initial jobs).")
 
+    # Store scheduler in a global variable or application context (not bot_data)
+    application.scheduler = scheduler  # Use a custom attribute to avoid serialization
+
+async def shutdown_scheduler(application: Application) -> None:
+    """Shutdown the scheduler when the application stops."""
+    if hasattr(application, "scheduler"):
+        scheduler = application.scheduler
+        if scheduler.running:
+            scheduler.shutdown()
+            logger.info("Scheduler has been shut down.")
+
 def main() -> None:
-    """Start the bot."""
+    """Start the bot with a lock to ensure only one instance runs."""
+    # Try to acquire a lock to prevent multiple instances
+    lock_fd = None
+    try:
+        lock_fd = open(LOCK_FILE, 'w')
+        fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except IOError:
+        logger.error("Another instance of the bot is already running. Exiting.")
+        return
+
     if not TOKEN:
         logger.error("Telegram bot token not found. Please set the TELEGRAM_BOT_TOKEN environment variable.")
         return
@@ -105,6 +126,7 @@ def main() -> None:
         .persistence(persistence)
         .defaults(defaults)
         .post_init(post_init)
+        .post_shutdown(shutdown_scheduler)  # Add shutdown hook
         .build()
     )
 
@@ -118,7 +140,17 @@ def main() -> None:
 
     # Start the Bot
     logger.info(f"Starting bot {BOT_NAME}...")
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
+    try:
+        application.run_polling(allowed_updates=Update.ALL_TYPES)
+    finally:
+        # Release the lock when the bot stops
+        if lock_fd:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+            lock_fd.close()
+            try:
+                os.remove(LOCK_FILE)
+            except OSError:
+                pass
 
 if __name__ == "__main__":
     # Note: python-telegram-bot's run_polling handles the asyncio loop.
