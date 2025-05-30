@@ -1,4 +1,3 @@
-# /home/ubuntu/ChatGPTPlus2FABot/keyboards.py
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 import database as db
 import math
@@ -199,3 +198,4 @@ def back_keyboard(callback_data):
         [InlineKeyboardButton("🔙 رجوع", callback_data=callback_data)]
     ]
     return InlineKeyboardMarkup(keyboard)
+
