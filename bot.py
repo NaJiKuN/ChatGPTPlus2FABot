@@ -83,8 +83,16 @@ async def post_init(application: Application) -> None:
         scheduler.start()
         logger.info("Scheduler started (no initial jobs).")
 
-    # Store scheduler in a global variable or application context (not bot_data)
-    application.scheduler = scheduler  # Use a custom attribute to avoid serialization
+    # Store scheduler in a custom attribute (not bot_data)
+    application.scheduler = scheduler
+
+async def pre_shutdown(application: Application) -> None:
+    """Clean bot_data before shutting down to avoid serialization issues."""
+    logger.info("Cleaning bot_data before shutdown...")
+    # Remove scheduler-related data from bot_data
+    if "scheduler" in application.bot_data:
+        del application.bot_data["scheduler"]
+    # Additional cleanup if needed (e.g., other non-serializable objects)
 
 async def shutdown_scheduler(application: Application) -> None:
     """Shutdown the scheduler when the application stops."""
@@ -126,6 +134,7 @@ def main() -> None:
         .persistence(persistence)
         .defaults(defaults)
         .post_init(post_init)
+        .pre_shutdown(pre_shutdown)  # Add pre-shutdown hook
         .post_shutdown(shutdown_scheduler)  # Add shutdown hook
         .build()
     )
