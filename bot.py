@@ -32,8 +32,8 @@ logger = logging.getLogger(__name__)
 # TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TOKEN = "8119053401:AAHuqgTkiq6M8rT9VSHYEnIl96BHt9lXIZM" # As requested by user
 BOT_NAME = "ChatGPTPlus2FABot"
-PROJECT_DIR = "/home/ubuntu/ChatGPTPlus2FABot" # Changed from ec2-user as per sandbox env
-PERSISTENCE_FILE = os.path.join(PROJECT_DIR, "bot_persistence.pickle")
+PROJECT_DIR = "/home/ec2-user/projects/ChatGPTPlus2FABot" # Changed from ec2-user as per sandbox env
+PERSISTENCE_FILE = os.path.join(PROJECT_DIR, "bot_persistence.pickle"
 
 async def post_init(application: Application) -> None:
     """Post-initialization function to set bot commands and schedule jobs."""
