@@ -41,7 +41,8 @@ def initialize_database():
                 timezone TEXT DEFAULT 'GMT',
                 max_attempts INTEGER DEFAULT 3,
                 is_active BOOLEAN DEFAULT TRUE,
-                job_id TEXT UNIQUE -- To store the scheduler job ID
+                job_id TEXT UNIQUE,
+                time_format INTEGER DEFAULT 24
             )
         """)
         logger.info("Groups table checked/created.")
@@ -58,6 +59,13 @@ def initialize_database():
             )
         """)
         logger.info("User Attempts table checked/created.")
+
+        # Check if time_format column exists, add it if not
+        try:
+            cursor.execute("SELECT time_format FROM groups LIMIT 1")
+        except sqlite3.OperationalError:
+            logger.info("Adding time_format column to groups table")
+            cursor.execute("ALTER TABLE groups ADD COLUMN time_format INTEGER DEFAULT 24")
 
         conn.commit()
         logger.info("Database initialized successfully.")
@@ -129,13 +137,13 @@ def get_all_admins():
     return admins
 
 # --- Group Management ---
-def add_or_update_group(group_id, totp_secret, interval_minutes=10, message_format=1, timezone='GMT', max_attempts=3, is_active=True, job_id=None):
+def add_or_update_group(group_id, totp_secret, interval_minutes=10, message_format=1, timezone='GMT', max_attempts=3, is_active=True, job_id=None, time_format=24):
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
         cursor.execute("""
-            INSERT INTO groups (group_id, totp_secret, interval_minutes, message_format, timezone, max_attempts, is_active, job_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO groups (group_id, totp_secret, interval_minutes, message_format, timezone, max_attempts, is_active, job_id, time_format)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(group_id) DO UPDATE SET
                 totp_secret=excluded.totp_secret,
                 interval_minutes=excluded.interval_minutes,
@@ -143,8 +151,9 @@ def add_or_update_group(group_id, totp_secret, interval_minutes=10, message_form
                 timezone=excluded.timezone,
                 max_attempts=excluded.max_attempts,
                 is_active=excluded.is_active,
-                job_id=excluded.job_id
-        """, (group_id, totp_secret, interval_minutes, message_format, timezone, max_attempts, is_active, job_id))
+                job_id=excluded.job_id,
+                time_format=excluded.time_format
+        """, (group_id, totp_secret, interval_minutes, message_format, timezone, max_attempts, is_active, job_id, time_format))
         conn.commit()
         logger.info(f"Group {group_id} added or updated.")
         return True, "تمت إضافة أو تحديث المجموعة بنجاح."
@@ -226,6 +235,25 @@ def update_group_message_format(group_id, message_format, timezone):
     except sqlite3.Error as e:
         conn.rollback()
         logger.error(f"Error updating message format/timezone for group {group_id}: {e}")
+        return False, f"خطأ في قاعدة البيانات: {e}"
+    finally:
+        conn.close()
+
+def update_group_time_format(group_id, time_format):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("UPDATE groups SET time_format = ? WHERE group_id = ?", (time_format, group_id))
+        conn.commit()
+        if cursor.rowcount > 0:
+            logger.info(f"Updated time format to {time_format} for group {group_id}.")
+            return True, "تم تحديث نظام الوقت بنجاح."
+        else:
+            logger.warning(f"Attempted to update time format for non-existent group {group_id}.")
+            return False, "المجموعة غير موجودة."
+    except sqlite3.Error as e:
+        conn.rollback()
+        logger.error(f"Error updating time format for group {group_id}: {e}")
         return False, f"خطأ في قاعدة البيانات: {e}"
     finally:
         conn.close()
