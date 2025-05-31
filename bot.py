@@ -23,8 +23,9 @@ from telegram.constants import ParseMode
 from telegram.error import BadRequest, TelegramError
 from telegram.ext import (
     Updater, CommandHandler, CallbackQueryHandler, MessageHandler,
-    Filters, CallbackContext, ConversationHandler, PicklePersistence
+     CallbackContext, ConversationHandler, PicklePersistence
 )
+from telegram.ext.filters import Filters
 from unittest.mock import MagicMock # Import MagicMock for dummy updates
 
 # --- إعدادات أساسية --- #
