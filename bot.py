@@ -3,14 +3,14 @@ import sqlite3
 import pytz
 import pyotp
 import re
+import os
 from datetime import datetime, timedelta
 from threading import Lock
 from telegram import (
     Update,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
-    BotCommand,
-    ParseMode
+    BotCommand
 )
 from telegram.ext import (
     Updater,
@@ -22,14 +22,21 @@ from telegram.ext import (
     ConversationHandler,
     JobQueue
 )
+from telegram.constants import ParseMode  # التعديل الرئيسي هنا
 
 # إعدادات البوت
 TOKEN = "8119053401:AAHuqgTkiq6M8rT9VSHYEnIl96BHt9lXIZM"
-ADMIN_ID = 764559466  # يمكن إضافة مسؤولين إضافيين عبر النظام
+ADMIN_ID = 764559466
+DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'chatgptplus2fabot.db')
 
 # إعداد التسجيل
 logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', 
+    level=logging.INFO,
+    handlers=[
+        logging.FileHandler("bot_errors.log"),
+        logging.StreamHandler()
+    ]
 )
 logger = logging.getLogger(__name__)
 
@@ -49,7 +56,7 @@ db_lock = Lock()
 # تهيئة قاعدة البيانات
 def init_db():
     with db_lock:
-        conn = sqlite3.connect('chatgptplus2fabot.db')
+        conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
         # جدول المجموعات
         c.execute('''
@@ -98,7 +105,7 @@ init_db()
 # دوال مساعدة لقاعدة البيانات
 def add_admin(user_id: int):
     with db_lock:
-        conn = sqlite3.connect('chatgptplus2fabot.db')
+        conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
         c.execute("INSERT OR IGNORE INTO admins (user_id) VALUES (?)", (user_id,))
         conn.commit()
@@ -106,7 +113,7 @@ def add_admin(user_id: int):
 
 def is_admin(user_id: int):
     with db_lock:
-        conn = sqlite3.connect('chatgptplus2fabot.db')
+        conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
         c.execute("SELECT 1 FROM admins WHERE user_id=?", (user_id,))
         result = c.fetchone() is not None
@@ -115,7 +122,7 @@ def is_admin(user_id: int):
 
 def add_group(group_id: str, totp_secret: str):
     with db_lock:
-        conn = sqlite3.connect('chatgptplus2fabot.db')
+        conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
         try:
             c.execute("INSERT INTO groups (group_id, totp_secret) VALUES (?, ?)", (group_id, totp_secret))
@@ -128,7 +135,7 @@ def add_group(group_id: str, totp_secret: str):
 
 def get_groups():
     with db_lock:
-        conn = sqlite3.connect('chatgptplus2fabot.db')
+        conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
         c.execute("SELECT group_id FROM groups")
         groups = [row[0] for row in c.fetchall()]
@@ -137,7 +144,7 @@ def get_groups():
 
 def get_group_info(group_id: str):
     with db_lock:
-        conn = sqlite3.connect('chatgptplus2fabot.db')
+        conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
         c.execute("SELECT * FROM groups WHERE group_id=?", (group_id,))
         group_info = c.fetchone()
@@ -146,7 +153,7 @@ def get_group_info(group_id: str):
 
 def update_group_interval(group_id: str, interval: int):
     with db_lock:
-        conn = sqlite3.connect('chatgptplus2fabot.db')
+        conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
         c.execute("UPDATE groups SET interval_minutes=? WHERE group_id=?", (interval, group_id))
         conn.commit()
@@ -154,7 +161,7 @@ def update_group_interval(group_id: str, interval: int):
 
 def update_group_active(group_id: str, active: bool):
     with db_lock:
-        conn = sqlite3.connect('chatgptplus2fabot.db')
+        conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
         c.execute("UPDATE groups SET is_active=? WHERE group_id=?", (active, group_id))
         conn.commit()
@@ -162,7 +169,7 @@ def update_group_active(group_id: str, active: bool):
 
 def update_message_format(group_id: str, msg_format: int):
     with db_lock:
-        conn = sqlite3.connect('chatgptplus2fabot.db')
+        conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
         c.execute("UPDATE groups SET message_format=? WHERE group_id=?", (msg_format, group_id))
         conn.commit()
@@ -170,16 +177,16 @@ def update_message_format(group_id: str, msg_format: int):
 
 def get_user_attempts(user_id: int, group_id: str):
     with db_lock:
-        conn = sqlite3.connect('chatgptplus2fabot.db')
+        conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
         c.execute("SELECT attempts FROM users WHERE user_id=? AND group_id=?", (user_id, group_id))
         result = c.fetchone()
         conn.close()
-        return result[0] if result else 3  # القيمة الافتراضية 3 محاولات
+        return result[0] if result else 3
 
 def update_user_attempts(user_id: int, group_id: str, delta: int):
     with db_lock:
-        conn = sqlite3.connect('chatgptplus2fabot.db')
+        conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
         # إنشاء المستخدم إذا لم يكن موجوداً
         c.execute("""
@@ -196,7 +203,7 @@ def update_user_attempts(user_id: int, group_id: str, delta: int):
 
 def reset_daily_attempts(context: CallbackContext):
     with db_lock:
-        conn = sqlite3.connect('chatgptplus2fabot.db')
+        conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
         c.execute("UPDATE users SET attempts = 3")
         conn.commit()
@@ -404,7 +411,7 @@ def button_handler(update: Update, context: CallbackContext):
         
         # الحصول على المستخدمين في هذه المجموعة
         with db_lock:
-            conn = sqlite3.connect('chatgptplus2fabot.db')
+            conn = sqlite3.connect(DB_PATH)
             c = conn.cursor()
             c.execute("""
                 SELECT u.user_id, u.attempts, u.last_attempt 
@@ -421,8 +428,11 @@ def button_handler(update: Update, context: CallbackContext):
         keyboard = []
         for user_id, attempts, last_attempt in users:
             last_attempt = last_attempt or "لم يستخدم"
-            user = context.bot.get_chat(user_id)
-            username = user.username or f"User {user_id}"
+            try:
+                user = context.bot.get_chat(user_id)
+                username = user.username or f"User {user_id}"
+            except:
+                username = f"User {user_id}"
             keyboard.append([
                 InlineKeyboardButton(
                     f"{username} - المحاولات: {attempts}",
@@ -442,8 +452,11 @@ def button_handler(update: Update, context: CallbackContext):
         context.user_data['user_id'] = user_id
         
         attempts = get_user_attempts(user_id, group_id)
-        user = context.bot.get_chat(user_id)
-        username = user.username or f"User {user_id}"
+        try:
+            user = context.bot.get_chat(user_id)
+            username = user.username or f"User {user_id}"
+        except:
+            username = f"User {user_id}"
         
         keyboard = [
             [InlineKeyboardButton("حظر المستخدم", callback_data='ban_user')],
@@ -490,7 +503,7 @@ def button_handler(update: Update, context: CallbackContext):
     
     elif data == 'list_admins':
         with db_lock:
-            conn = sqlite3.connect('chatgptplus2fabot.db')
+            conn = sqlite3.connect(DB_PATH)
             c = conn.cursor()
             c.execute("SELECT user_id FROM admins")
             admins = [str(row[0]) for row in c.fetchall()]
@@ -578,11 +591,14 @@ def send_group_message(context: CallbackContext):
     # إرسال الرسالة مع زر النسخ
     keyboard = [[InlineKeyboardButton("📋 Copy Code", callback_data=f'copy_code_{group_id}')]]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    context.bot.send_message(
-        chat_id=group_id, 
-        text=message_text, 
-        reply_markup=reply_markup
-    )
+    try:
+        context.bot.send_message(
+            chat_id=group_id, 
+            text=message_text, 
+            reply_markup=reply_markup
+        )
+    except Exception as e:
+        logger.error(f"Error sending message to group {group_id}: {str(e)}")
 
 def copy_code_button(update: Update, context: CallbackContext):
     query = update.callback_query
@@ -629,7 +645,7 @@ def copy_code_button(update: Update, context: CallbackContext):
         )
         query.answer("✅ تم إرسال الرمز إلى رسائلك الخاصة!", show_alert=False)
     except Exception as e:
-        logger.error(f"Failed to send DM to {user_id}: {e}")
+        logger.error(f"Failed to send DM to {user_id}: {str(e)}")
         query.answer("❌ فشل إرسال الرسالة. تأكد من بدء محادثة مع البوت.", show_alert=True)
 
 def add_attempts_input(update: Update, context: CallbackContext):
