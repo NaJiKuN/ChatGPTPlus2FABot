@@ -18,7 +18,8 @@ import pytz
 import base64
 import binascii # Needed for TOTP error handling
 from datetime import datetime, date, time, timedelta
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ParseMode, User
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, User
+from telegram.constants import ParseMode
 from telegram.error import BadRequest, TelegramError
 from telegram.ext import (
     Updater, CommandHandler, CallbackQueryHandler, MessageHandler,
