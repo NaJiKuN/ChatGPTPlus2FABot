@@ -13,6 +13,7 @@ import logging
 import threading
 import pyotp
 import datetime
+import asyncio
 from dateutil import tz
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -34,11 +35,11 @@ ADMIN_ID = 764559466  # تحويل النص إلى رقم
 # حالات المحادثة
 (
     MAIN_MENU, MANAGE_GROUPS, ADD_GROUP, DELETE_GROUP, EDIT_GROUP,
-    ADD_SECRET, DELETE_SECRET, EDIT_SECRET, MANAGE_INTERVAL,
+    ADD_SECRET, EDIT_SECRET, MANAGE_INTERVAL,
     MANAGE_MESSAGE_STYLE, MANAGE_USER_ATTEMPTS, SELECT_GROUP_FOR_USER,
     SELECT_USER, MANAGE_USER, ADD_ATTEMPTS, REMOVE_ATTEMPTS,
     MANAGE_ADMINS, ADD_ADMIN, REMOVE_ADMIN
-) = range(18)
+) = range(18)  # تم تصحيح عدد الحالات ليكون 18 بدلاً من 19
 
 # ملفات البيانات
 DATA_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -1327,6 +1328,4 @@ def main():
     application.run_polling()
 
 if __name__ == "__main__":
-    # إضافة دعم للمهام غير المتزامنة
-    import asyncio
     main()
