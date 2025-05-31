@@ -1,634 +1,915 @@
-import sqlite3
-import pyotp
-import schedule
-import threading
+import os
 import time
-from datetime import datetime, timedelta
 import pytz
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import (
-    Application, CommandHandler, CallbackQueryHandler, ContextTypes, ConversationHandler
+from datetime import datetime, timedelta
+import threading
+from typing import Dict, List, Tuple, Optional
+import secrets
+import string
+import pyotp
+from telegram import (
+    Update,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    KeyboardButton,
+    ReplyKeyboardMarkup,
+    ReplyKeyboardRemove,
 )
+from telegram.ext import (
+    Updater,
+    CommandHandler,
+    CallbackContext,
+    CallbackQueryHandler,
+    MessageHandler,
+    Filters,
+    ConversationHandler,
+)
+import logging
+import json
+from collections import defaultdict
 
-# إعدادات البوت
+# إعدادات التسجيل
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
+
+# بيانات البوت
 TOKEN = "8119053401:AAHuqgTkiq6M8rT9VSHYEnIl96BHt9lXIZM"
-ADMIN_ID = "764559466"  # المسؤول الافتراضي
-DB_PATH = "/home/ec2-user/projects/ChatGPTPlus2FABot/bot.db"
+ADMIN_ID = 764559466  # يمكن تحويله إلى قائمة إذا كان هناك عدة مسؤولين
+
+# مسارات الملفات
+DATA_DIR = "data"
+CONFIG_FILE = os.path.join(DATA_DIR, "config.json")
+USERS_FILE = os.path.join(DATA_DIR, "users.json")
 
 # حالات المحادثة
-ADD_GROUP, EDIT_GROUP, DEL_GROUP, SET_PERIOD, SET_MESSAGE_FORMAT, SET_TIMEZONE, SET_ATTEMPTS, SELECT_GROUP, SELECT_USER, ADD_ATTEMPTS, DEL_ATTEMPTS, BAN_USER, ADD_ADMIN, DEL_ADMIN = range(13)
+(
+    ADMIN_MENU,
+    MANAGE_GROUPS,
+    ADD_GROUP,
+    EDIT_GROUP,
+    DELETE_GROUP,
+    MANAGE_TOTP,
+    ADD_TOTP,
+    EDIT_TOTP,
+    DELETE_TOTP,
+    SET_INTERVAL,
+    SET_MESSAGE_STYLE,
+    SET_TIMEZONE,
+    MANAGE_ADMINS,
+    ADD_ADMIN,
+    REMOVE_ADMIN,
+    MANAGE_ATTEMPTS,
+    SELECT_GROUP_ATTEMPTS,
+    SELECT_USER_ATTEMPTS,
+    ADD_ATTEMPTS,
+    REMOVE_ATTEMPTS,
+    BAN_USER,
+) = range(21)
 
-# إعداد قاعدة البيانات
-def init_db():
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute('''CREATE TABLE IF NOT EXISTS groups (
-        group_id TEXT PRIMARY KEY, totp_secret TEXT, period INTEGER, message_format INTEGER, timezone TEXT, running INTEGER)''')
-    c.execute('''CREATE TABLE IF NOT EXISTS admins (admin_id TEXT PRIMARY KEY)''')
-    c.execute('''CREATE TABLE IF NOT EXISTS user_attempts (
-        user_id TEXT, group_id TEXT, attempts INTEGER, last_reset TEXT, PRIMARY KEY (user_id, group_id))''')
-    c.execute('INSERT OR IGNORE INTO admins (admin_id) VALUES (?)', (ADMIN_ID,))
-    conn.commit()
-    conn.close()
+# إنشاء مجلد البيانات إذا لم يكن موجوداً
+if not os.path.exists(DATA_DIR):
+    os.makedirs(DATA_DIR)
 
-# دالة لتوليد رمز TOTP
-def generate_2fa_code(totp_secret):
-    totp = pyotp.TOTP(totp_secret, interval=30)
+# تهيئة ملفات البيانات إذا لم تكن موجودة
+def init_data_files():
+    default_data = {
+        "groups": {},
+        "admins": [ADMIN_ID],
+        "message_style": 1,
+        "timezone": "Asia/Gaza",
+        "user_attempts": {},
+        "banned_users": [],
+    }
+    
+    if not os.path.exists(CONFIG_FILE):
+        with open(CONFIG_FILE, "w") as f:
+            json.dump(default_data, f, indent=4)
+    
+    if not os.path.exists(USERS_FILE):
+        with open(USERS_FILE, "w") as f:
+            json.dump({}, f, indent=4)
+
+init_data_files()
+
+# وظائف مساعدة للتعامل مع الملفات
+def load_config():
+    with open(CONFIG_FILE, "r") as f:
+        return json.load(f)
+
+def save_config(config):
+    with open(CONFIG_FILE, "w") as f:
+        json.dump(config, f, indent=4)
+
+def load_users():
+    with open(USERS_FILE, "r") as f:
+        return json.load(f)
+
+def save_users(users):
+    with open(USERS_FILE, "w") as f:
+        json.dump(users, f, indent=4)
+
+# وظائف مساعدة للوقت
+def get_current_time(timezone_str="Asia/Gaza"):
+    tz = pytz.timezone(timezone_str)
+    return datetime.now(tz)
+
+def format_time(dt, time_format="%I:%M:%S %p"):
+    return dt.strftime(time_format)
+
+# وظائف مساعدة لـ 2FA
+def generate_2fa_code(secret: str) -> str:
+    totp = pyotp.TOTP(secret)
     return totp.now()
 
-# دالة للحصول على الوقت الحالي والتالي
-def get_times(timezone_str):
-    tz = pytz.timezone(timezone_str)
-    now = datetime.now(tz)
-    current_time = now.strftime("%I:%M:%S %p")
-    next_time = (now + timedelta(minutes=10)).strftime("%I:%M:%S %p")
-    return current_time, next_time
-
-# دالة لإرسال الرسائل الدورية
-def send_periodic_message(context: ContextTypes.DEFAULT_TYPE):
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("SELECT group_id, message_format, timezone, period FROM groups WHERE running = 1")
-    groups = c.fetchall()
-    for group_id, message_format, timezone, period in groups:
-        current_time, next_time = get_times(timezone)
-        if message_format == 1:
-            message = "🔐 2FA Verification Code\n\nNext code at: " + next_time
-        elif message_format == 2:
-            message = f"🔐 2FA Verification Code\n\nNext code in: {period} minutes\nNext code at: {next_time}"
-        else:
-            message = f"🔐 2FA Verification Code\nNext code in: {period} minutes\nCorrect Time: {current_time}\nNext Code at: {next_time}"
-        keyboard = [[InlineKeyboardButton("Copy Code", callback_data=f"copy_code_{group_id}")]]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        context.bot.send_message(chat_id=group_id, text=message, reply_markup=reply_markup)
-    conn.close()
-
-# جدولة الرسائل الدورية
-def schedule_messages():
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("SELECT group_id, period FROM groups WHERE running = 1")
-    groups = c.fetchall()
-    conn.close()
-    schedule.clear()
-    for group_id, period in groups:
-        schedule.every(period).minutes.do(send_periodic_message, context=app.context_types.context)
-    while True:
-        schedule.run_pending()
-        time.sleep(1)
-
-# التحقق من المسؤول
-def is_admin(user_id):
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("SELECT admin_id FROM admins WHERE admin_id = ?", (str(user_id),))
-    result = c.fetchone()
-    conn.close()
-    return result is not None
-
-# التحقق من المحاولات
-def check_attempts(user_id, group_id):
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    today = datetime.now().strftime("%Y-%m-%d")
-    c.execute("SELECT attempts, last_reset FROM user_attempts WHERE user_id = ? AND group_id = ?", (str(user_id), group_id))
-    result = c.fetchone()
-    if result:
-        attempts, last_reset = result
-        if last_reset != today:
-            c.execute("UPDATE user_attempts SET attempts = 3, last_reset = ? WHERE user_id = ? AND group_id = ?", (today, str(user_id), group_id))
-            conn.commit()
-            attempts = 3
-        conn.close()
-        return attempts
-    else:
-        c.execute("INSERT INTO user_attempts (user_id, group_id, attempts, last_reset) VALUES (?, ?, 3, ?)", (str(user_id), group_id, today))
-        conn.commit()
-        conn.close()
-        return 3
-
-# أمر /admin
-async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update.effective_user.id):
-        await update.message.reply_text("عذرًا، هذا الأمر مخصص للمسؤولين فقط!")
-        return
-    keyboard = [
-        [InlineKeyboardButton("إدارة Groups/TOTP_SECRET", callback_data="manage_groups")],
-        [InlineKeyboardButton("إدارة فترة التكرار", callback_data="manage_period")],
-        [InlineKeyboardButton("إدارة شكل/توقيت الرسالة", callback_data="manage_message")],
-        [InlineKeyboardButton("إدارة محاولات المستخدمين", callback_data="manage_attempts")],
-        [InlineKeyboardButton("إدارة المسؤولين", callback_data="manage_admins")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text("مرحبًا بك في لوحة إدارة ChatGPTPlus2FABot! اختر خيارًا:", reply_markup=reply_markup)
-
-# إدارة المجموعات
-async def manage_groups(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    keyboard = [
-        [InlineKeyboardButton("إضافة مجموعة", callback_data="add_group")],
-        [InlineKeyboardButton("تعديل مجموعة", callback_data="edit_group")],
-        [InlineKeyboardButton("حذف مجموعة", callback_data="del_group")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await query.message.reply_text("اختر إجراءً لإدارة المجموعات:", reply_markup=reply_markup)
-    return ADD_GROUP
-
-async def add_group(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    await query.message.reply_text("أدخل معرف المجموعة (مثال: -100XXXXXXXXXX):")
-    return ADD_GROUP
-
-async def add_group_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    group_id = update.message.text
-    if not group_id.startswith("-100"):
-        await update.message.reply_text("معرف المجموعة غير صحيح! يجب أن يبدأ بـ -100")
-        return ADD_GROUP
-    context.user_data["group_id"] = group_id
-    await update.message.reply_text("أدخل TOTP_SECRET للمجموعة:")
-    return ADD_GROUP
-
-async def add_totp_secret(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    totp_secret = update.message.text
-    group_id = context.user_data["group_id"]
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
+def is_valid_secret(secret: str) -> bool:
     try:
-        c.execute("INSERT INTO groups (group_id, totp_secret, period, message_format, timezone, running) VALUES (?, ?, 10, 1, 'UTC', 1)", (group_id, totp_secret))
-        conn.commit()
-        await update.message.reply_text(f"تم إضافة المجموعة {group_id} بنجاح!")
+        pyotp.TOTP(secret).now()
+        return True
     except:
-        await update.message.reply_text("فشل في إضافة المجموعة! تأكد من المعرف أو TOTP_SECRET.")
-    conn.close()
-    return ConversationHandler.END
+        return False
 
-async def edit_group(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("SELECT group_id FROM groups")
-    groups = c.fetchall()
-    conn.close()
-    if not groups:
-        await query.message.reply_text("لا توجد مجموعات مضافة!")
+# وظائف مساعدة للواجهة
+def admin_menu_keyboard():
+    keyboard = [
+        [
+            InlineKeyboardButton("إدارة المجموعات/الأسرار", callback_data="manage_groups"),
+            InlineKeyboardButton("إدارة فترة التكرار", callback_data="set_interval"),
+        ],
+        [
+            InlineKeyboardButton("إدارة شكل/توقيت الرسالة", callback_data="set_message_style"),
+            InlineKeyboardButton("إدارة محاولات المستخدمين", callback_data="manage_attempts"),
+        ],
+        [
+            InlineKeyboardButton("إدارة المسؤولين", callback_data="manage_admins"),
+            InlineKeyboardButton("إغلاق القائمة", callback_data="close_menu"),
+        ],
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+def groups_keyboard():
+    config = load_config()
+    keyboard = []
+    for group_id in config["groups"]:
+        keyboard.append([
+            InlineKeyboardButton(f"المجموعة: {group_id}", callback_data=f"group_{group_id}"),
+        ])
+    keyboard.append([
+        InlineKeyboardButton("إضافة مجموعة", callback_data="add_group"),
+        InlineKeyboardButton("رجوع", callback_data="back_to_admin"),
+    ])
+    return InlineKeyboardMarkup(keyboard)
+
+def group_management_keyboard(group_id):
+    keyboard = [
+        [
+            InlineKeyboardButton("إضافة/تعديل TOTP_SECRET", callback_data=f"add_totp_{group_id}"),
+            InlineKeyboardButton("حذف المجموعة", callback_data=f"delete_group_{group_id}"),
+        ],
+        [
+            InlineKeyboardButton("رجوع", callback_data="manage_groups"),
+        ],
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+def interval_keyboard():
+    keyboard = [
+        [
+            InlineKeyboardButton("1 دقيقة", callback_data="interval_1"),
+            InlineKeyboardButton("5 دقائق", callback_data="interval_5"),
+            InlineKeyboardButton("10 دقائق", callback_data="interval_10"),
+        ],
+        [
+            InlineKeyboardButton("15 دقيقة", callback_data="interval_15"),
+            InlineKeyboardButton("30 دقيقة", callback_data="interval_30"),
+            InlineKeyboardButton("1 ساعة", callback_data="interval_60"),
+        ],
+        [
+            InlineKeyboardButton("3 ساعات", callback_data="interval_180"),
+            InlineKeyboardButton("12 ساعة", callback_data="interval_720"),
+            InlineKeyboardButton("24 ساعة", callback_data="interval_1440"),
+        ],
+        [
+            InlineKeyboardButton("إيقاف التكرار", callback_data="interval_0"),
+            InlineKeyboardButton("بدء التكرار", callback_data="start_interval"),
+        ],
+        [
+            InlineKeyboardButton("رجوع", callback_data="back_to_admin"),
+        ],
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+def message_style_keyboard():
+    keyboard = [
+        [
+            InlineKeyboardButton("الشكل الأول", callback_data="style_1"),
+            InlineKeyboardButton("الشكل الثاني", callback_data="style_2"),
+        ],
+        [
+            InlineKeyboardButton("الشكل الثالث", callback_data="style_3"),
+        ],
+        [
+            InlineKeyboardButton("تغيير المنطقة الزمنية", callback_data="change_timezone"),
+        ],
+        [
+            InlineKeyboardButton("رجوع", callback_data="back_to_admin"),
+        ],
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+def timezone_keyboard():
+    keyboard = [
+        [
+            InlineKeyboardButton("توقيت غرينتش (UTC)", callback_data="tz_UTC"),
+            InlineKeyboardButton("توقيت غزة (Asia/Gaza)", callback_data="tz_Asia/Gaza"),
+        ],
+        [
+            InlineKeyboardButton("رجوع", callback_data="set_message_style"),
+        ],
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+def admins_management_keyboard():
+    keyboard = [
+        [
+            InlineKeyboardButton("إضافة مسؤول", callback_data="add_admin"),
+            InlineKeyboardButton("حذف مسؤول", callback_data="remove_admin"),
+        ],
+        [
+            InlineKeyboardButton("رجوع", callback_data="back_to_admin"),
+        ],
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+def attempts_management_keyboard():
+    keyboard = [
+        [
+            InlineKeyboardButton("حدد عدد مرات النسخ", callback_data="set_attempts_limit"),
+        ],
+        [
+            InlineKeyboardButton("اختيار المجموعة", callback_data="select_group_attempts"),
+        ],
+        [
+            InlineKeyboardButton("رجوع", callback_data="back_to_admin"),
+        ],
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+def user_attempts_keyboard(group_id, user_id):
+    keyboard = [
+        [
+            InlineKeyboardButton("حظر المستخدم", callback_data=f"ban_user_{group_id}_{user_id}"),
+            InlineKeyboardButton("إضافة محاولات", callback_data=f"add_attempts_{group_id}_{user_id}"),
+        ],
+        [
+            InlineKeyboardButton("حذف محاولات", callback_data=f"remove_attempts_{group_id}_{user_id}"),
+        ],
+        [
+            InlineKeyboardButton("رجوع", callback_data="select_group_attempts"),
+        ],
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+# وظائف البوت الأساسية
+def start(update: Update, context: CallbackContext):
+    user_id = update.effective_user.id
+    if user_id == ADMIN_ID or user_id in load_config()["admins"]:
+        update.message.reply_text(
+            "مرحباً بك في نظام إدارة 2FA\nاستخدم الأمر /admin للوصول إلى لوحة التحكم.",
+            reply_markup=ReplyKeyboardRemove(),
+        )
+    else:
+        update.message.reply_text(
+            "مرحباً! هذا البوت مخصص لإدارة رموز المصادقة الثنائية.",
+            reply_markup=ReplyKeyboardRemove(),
+        )
+
+def admin_command(update: Update, context: CallbackContext):
+    user_id = update.effective_user.id
+    config = load_config()
+    
+    if user_id == ADMIN_ID or user_id in config["admins"]:
+        update.message.reply_text(
+            "لوحة تحكم المسؤول:",
+            reply_markup=admin_menu_keyboard(),
+        )
+        return ADMIN_MENU
+    else:
+        update.message.reply_text("ليس لديك صلاحية الوصول إلى هذه الأداة.")
         return ConversationHandler.END
-    keyboard = [[InlineKeyboardButton(group[0], callback_data=f"edit_group_{group[0]}")] for group in groups]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await query.message.reply_text("اختر المجموعة لتعديلها:", reply_markup=reply_markup)
-    return EDIT_GROUP
 
-async def edit_group_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def back_to_admin(update: Update, context: CallbackContext):
     query = update.callback_query
-    await query.answer()
-    group_id = query.data.split("_")[-1]
-    context.user_data["group_id"] = group_id
-    await query.message.reply_text(f"أدخل TOTP_SECRET الجديد للمجموعة {group_id}:")
-    return EDIT_GROUP
+    query.answer()
+    query.edit_message_text(
+        text="لوحة تحكم المسؤول:",
+        reply_markup=admin_menu_keyboard(),
+    )
+    return ADMIN_MENU
 
-async def edit_totp_secret(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    totp_secret = update.message.text
-    group_id = context.user_data["group_id"]
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("UPDATE groups SET totp_secret = ? WHERE group_id = ?", (totp_secret, group_id))
-    conn.commit()
-    conn.close()
-    await update.message.reply_text(f"تم تعديل TOTP_SECRET للمجموعة {group_id} بنجاح!")
+def close_menu(update: Update, context: CallbackContext):
+    query = update.callback_query
+    query.answer()
+    query.edit_message_text(text="تم إغلاق القائمة.")
     return ConversationHandler.END
 
-async def del_group(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# إدارة المجموعات و TOTP_SECRET
+def manage_groups(update: Update, context: CallbackContext):
     query = update.callback_query
-    await query.answer()
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("SELECT group_id FROM groups")
-    groups = c.fetchall()
-    conn.close()
-    if not groups:
-        await query.message.reply_text("لا توجد مجموعات مضافة!")
-        return ConversationHandler.END
-    keyboard = [[InlineKeyboardButton(group[0], callback_data=f"del_group_{group[0]}")] for group in groups]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await query.message.reply_text("اختر المجموعة لحذفها:", reply_markup=reply_markup)
-    return DEL_GROUP
+    query.answer()
+    query.edit_message_text(
+        text="إدارة المجموعات والأسرار:",
+        reply_markup=groups_keyboard(),
+    )
+    return MANAGE_GROUPS
 
-async def del_group_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def add_group(update: Update, context: CallbackContext):
     query = update.callback_query
-    await query.answer()
-    group_id = query.data.split("_")[-1]
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("DELETE FROM groups WHERE group_id = ?", (group_id,))
-    c.execute("DELETE FROM user_attempts WHERE group_id = ?", (group_id,))
-    conn.commit()
-    conn.close()
-    await query.message.reply_text(f"تم حذف المجموعة {group_id} بنجاح!")
-    return ConversationHandler.END
+    query.answer()
+    query.edit_message_text(text="أرسل معرف المجموعة الذي تريد إضافته (يجب أن يبدأ بـ -100):")
+    return ADD_GROUP
+
+def process_add_group(update: Update, context: CallbackContext):
+    group_id = update.message.text.strip()
+    
+    try:
+        group_id_int = int(group_id)
+        if group_id_int >= 0:
+            update.message.reply_text("معرف المجموعة يجب أن يبدأ بـ -100. الرجاء إدخال معرف صحيح.")
+            return ADD_GROUP
+    except ValueError:
+        update.message.reply_text("معرف المجموعة يجب أن يكون رقماً. الرجاء إدخال معرف صحيح.")
+        return ADD_GROUP
+    
+    config = load_config()
+    if group_id in config["groups"]:
+        update.message.reply_text("هذه المجموعة مضافه بالفعل.")
+    else:
+        config["groups"][group_id] = {
+            "totp_secret": "",
+            "interval": 10,  # 10 دقائق افتراضياً
+            "active": False,
+            "next_run": None,
+        }
+        save_config(config)
+        update.message.reply_text(f"تمت إضافة المجموعة {group_id} بنجاح.")
+    
+    return back_to_admin(update, context)
+
+def group_selected(update: Update, context: CallbackContext):
+    query = update.callback_query
+    query.answer()
+    group_id = query.data.split("_")[1]
+    
+    config = load_config()
+    group_info = config["groups"].get(group_id, {})
+    
+    text = f"إدارة المجموعة: {group_id}\n"
+    text += f"TOTP_SECRET: {'*****' if group_info.get('totp_secret') else 'غير مضبوط'}\n"
+    text += f"فترة التكرار: كل {group_info.get('interval', 10)} دقائق\n"
+    text += f"الحالة: {'نشط' if group_info.get('active', False) else 'غير نشط'}"
+    
+    query.edit_message_text(
+        text=text,
+        reply_markup=group_management_keyboard(group_id),
+    )
+    return MANAGE_TOTP
+
+def add_totp(update: Update, context: CallbackContext):
+    query = update.callback_query
+    query.answer()
+    group_id = query.data.split("_")[2]
+    context.user_data["current_group"] = group_id
+    query.edit_message_text(text=f"أرسل TOTP_SECRET للمجموعة {group_id}:")
+    return ADD_TOTP
+
+def process_add_totp(update: Update, context: CallbackContext):
+    totp_secret = update.message.text.strip()
+    group_id = context.user_data["current_group"]
+    
+    if not is_valid_secret(totp_secret):
+        update.message.reply_text("TOTP_SECRET غير صالح. الرجاء إدخال سر صالح.")
+        return ADD_TOTP
+    
+    config = load_config()
+    if group_id in config["groups"]:
+        config["groups"][group_id]["totp_secret"] = totp_secret
+        save_config(config)
+        update.message.reply_text(f"تمت إضافة TOTP_SECRET للمجموعة {group_id} بنجاح.")
+    else:
+        update.message.reply_text("المجموعة غير موجودة. الرجاء إضافتها أولاً.")
+    
+    return back_to_admin(update, context)
+
+def delete_group(update: Update, context: CallbackContext):
+    query = update.callback_query
+    query.answer()
+    group_id = query.data.split("_")[2]
+    
+    config = load_config()
+    if group_id in config["groups"]:
+        del config["groups"][group_id]
+        save_config(config)
+        query.edit_message_text(f"تم حذف المجموعة {group_id} بنجاح.")
+    else:
+        query.edit_message_text("المجموعة غير موجودة.")
+    
+    return back_to_admin(update, context)
 
 # إدارة فترة التكرار
-async def manage_period(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def set_interval(update: Update, context: CallbackContext):
     query = update.callback_query
-    await query.answer()
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("SELECT group_id FROM groups")
-    groups = c.fetchall()
-    conn.close()
-    if not groups:
-        await query.message.reply_text("لا توجد مجموعات مضافة!")
-        return ConversationHandler.END
-    keyboard = [[InlineKeyboardButton(group[0], callback_data=f"set_period_{group[0]}")] for group in groups]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await query.message.reply_text("اختر المجموعة لإدارة فترة التكرار:", reply_markup=reply_markup)
-    return SET_PERIOD
+    query.answer()
+    query.edit_message_text(
+        text="اختر فترة تكرار إرسال رمز المصادقة:",
+        reply_markup=interval_keyboard(),
+    )
+    return SET_INTERVAL
 
-async def set_period(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def process_interval(update: Update, context: CallbackContext):
     query = update.callback_query
-    await query.answer()
-    group_id = query.data.split("_")[-1]
-    context.user_data["group_id"] = group_id
-    keyboard = [
-        [InlineKeyboardButton("1 دقيقة", callback_data="period_1"), InlineKeyboardButton("5 دقائق", callback_data="period_5")],
-        [InlineKeyboardButton("10 دقائق", callback_data="period_10"), InlineKeyboardButton("15 دقيقة", callback_data="period_15")],
-        [InlineKeyboardButton("30 دقيقة", callback_data="period_30"), InlineKeyboardButton("ساعة", callback_data="period_60")],
-        [InlineKeyboardButton("3 ساعات", callback_data="period_180"), InlineKeyboardButton("12 ساعة", callback_data="period_720")],
-        [InlineKeyboardButton("24 ساعة", callback_data="period_1440")],
-        [InlineKeyboardButton("إيقاف التكرار", callback_data="stop_period"), InlineKeyboardButton("بدء التكرار", callback_data="start_period")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await query.message.reply_text(f"اختر فترة التكرار للمجموعة {group_id}:", reply_markup=reply_markup)
-    return SET_PERIOD
+    query.answer()
+    interval = int(query.data.split("_")[1])
+    
+    config = load_config()
+    for group_id in config["groups"]:
+        config["groups"][group_id]["interval"] = interval
+    save_config(config)
+    
+    query.edit_message_text(
+        text=f"تم ضبط فترة التكرار على كل {interval} دقائق لجميع المجموعات.",
+        reply_markup=interval_keyboard(),
+    )
+    return SET_INTERVAL
 
-async def set_period_value(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def start_interval(update: Update, context: CallbackContext):
     query = update.callback_query
-    await query.answer()
-    group_id = context.user_data["group_id"]
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    action = query.data
-    if action.startswith("period_"):
-        period = int(action.split("_")[-1])
-        c.execute("UPDATE groups SET period = ?, running = 1 WHERE group_id = ?", (period, group_id))
-        conn.commit()
-        await query.message.reply_text(f"تم تعيين فترة التكرار للمجموعة {group_id} إلى {period} دقيقة!")
-    elif action == "stop_period":
-        c.execute("UPDATE groups SET running = 0 WHERE group_id = ?", (group_id,))
-        conn.commit()
-        await query.message.reply_text(f"تم إيقاف التكرار للمجموعة {group_id}!")
-    elif action == "start_period":
-        c.execute("UPDATE groups SET running = 1 WHERE group_id = ?", (group_id,))
-        conn.commit()
-        await query.message.reply_text(f"تم بدء التكرار للمجموعة {group_id}!")
-    conn.close()
-    return ConversationHandler.END
+    query.answer()
+    
+    config = load_config()
+    for group_id in config["groups"]:
+        config["groups"][group_id]["active"] = True
+        config["groups"][group_id]["next_run"] = time.time()
+    save_config(config)
+    
+    query.edit_message_text(
+        text="تم تفعيل الإرسال الدوري لجميع المجموعات.",
+        reply_markup=interval_keyboard(),
+    )
+    return SET_INTERVAL
 
-# إدارة شكل/توقيت الرسالة
-async def manage_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# إدارة شكل الرسالة والتوقيت
+def set_message_style(update: Update, context: CallbackContext):
     query = update.callback_query
-    await query.answer()
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("SELECT group_id FROM groups")
-    groups = c.fetchall()
-    conn.close()
-    if not groups:
-        await query.message.reply_text("لا توجد مجموعات مضافة!")
-        return ConversationHandler.END
-    keyboard = [[InlineKeyboardButton(group[0], callback_data=f"set_message_{group[0]}")] for group in groups]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await query.message.reply_text("اختر المجموعة لإدارة شكل/توقيت الرسالة:", reply_markup=reply_markup)
-    return SET_MESSAGE_FORMAT
+    query.answer()
+    query.edit_message_text(
+        text="اختر شكل الرسالة التي تريد عرضها في المجموعة:",
+        reply_markup=message_style_keyboard(),
+    )
+    return SET_MESSAGE_STYLE
 
-async def set_message_format(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def process_message_style(update: Update, context: CallbackContext):
     query = update.callback_query
-    await query.answer()
-    group_id = query.data.split("_")[-1]
-    context.user_data["group_id"] = group_id
-    keyboard = [
-        [InlineKeyboardButton("الشكل 1", callback_data="format_1")],
-        [InlineKeyboardButton("الشكل 2", callback_data="format_2")],
-        [InlineKeyboardButton("الشكل 3", callback_data="format_3")],
-        [InlineKeyboardButton("توقيت غرينتش", callback_data="tz_UTC")],
-        [InlineKeyboardButton("توقيت غزة", callback_data="tz_Asia/Gaza")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await query.message.reply_text(f"اختر شكل الرسالة أو التوقيت للمجموعة {group_id}:", reply_markup=reply_markup)
-    return SET_MESSAGE_FORMAT
+    query.answer()
+    style = int(query.data.split("_")[1])
+    
+    config = load_config()
+    config["message_style"] = style
+    save_config(config)
+    
+    query.edit_message_text(
+        text=f"تم تغيير شكل الرسالة إلى النمط {style}.",
+        reply_markup=message_style_keyboard(),
+    )
+    return SET_MESSAGE_STYLE
 
-async def set_message_value(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def change_timezone(update: Update, context: CallbackContext):
     query = update.callback_query
-    await query.answer()
-    group_id = context.user_data["group_id"]
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    action = query.data
-    if action.startswith("format_"):
-        format_id = int(action.split("_")[-1])
-        c.execute("UPDATE groups SET message_format = ? WHERE group_id = ?", (format_id, group_id))
-        conn.commit()
-        await query.message.reply_text(f"تم تعيين شكل الرسالة {format_id} للمجموعة {group_id}!")
-    elif action.startswith("tz_"):
-        timezone = action.split("_")[-1]
-        c.execute("UPDATE groups SET timezone = ? WHERE group_id = ?", (timezone, group_id))
-        conn.commit()
-        await query.message.reply_text(f"تم تعيين التوقيت إلى {timezone} للمجموعة {group_id}!")
-    conn.close()
-    return ConversationHandler.END
+    query.answer()
+    query.edit_message_text(
+        text="اختر المنطقة الزمنية:",
+        reply_markup=timezone_keyboard(),
+    )
+    return SET_TIMEZONE
 
-# إدارة محاولات المستخدمين
-async def manage_attempts(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def process_timezone(update: Update, context: CallbackContext):
     query = update.callback_query
-    await query.answer()
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("SELECT DISTINCT group_id FROM user_attempts")
-    groups = c.fetchall()
-    conn.close()
-    if not groups:
-        await query.message.reply_text("لا توجد مجموعات تحتوي على مستخدمين!")
-        return ConversationHandler.END
-    keyboard = [[InlineKeyboardButton(group[0], callback_data=f"select_group_{group[0]}")] for group in groups]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await query.message.reply_text("اختر المجموعة لإدارة محاولات المستخدمين:", reply_markup=reply_markup)
-    return SELECT_GROUP
-
-async def select_group(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    group_id = query.data.split("_")[-1]
-    context.user_data["group_id"] = group_id
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("SELECT user_id, attempts FROM user_attempts WHERE group_id = ?", (group_id,))
-    users = c.fetchall()
-    conn.close()
-    if not users:
-        await query.message.reply_text(f"لا يوجد مستخدمين في المجموعة {group_id}!")
-        return ConversationHandler.END
-    keyboard = [[InlineKeyboardButton(f"User ID: {u[0]} | محاولات: {u[1]}", callback_data=f"select_user_{u[0]}")] for u in users]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await query.message.reply_text(f"اختر المستخدم في المجموعة {group_id}:", reply_markup=reply_markup)
-    return SELECT_USER
-
-async def select_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    user_id = query.data.split("_")[-1]
-    context.user_data["user_id"] = user_id
-    keyboard = [
-        [InlineKeyboardButton("حظر المستخدم", callback_data="ban_user")],
-        [InlineKeyboardButton("إضافة محاولات", callback_data="add_attempts")],
-        [InlineKeyboardButton("حذف محاولات", callback_data="del_attempts")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await query.message.reply_text(f"اختر إجراء للمستخدم {user_id}:", reply_markup=reply_markup)
-    return SELECT_USER
-
-async def ban_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    user_id = context.user_data["user_id"]
-    group_id = context.user_data["group_id"]
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("UPDATE user_attempts SET attempts = 0 WHERE user_id = ? AND group_id = ?", (user_id, group_id))
-    conn.commit()
-    conn.close()
-    await query.message.reply_text(f"تم حظر المستخدم {user_id} في المجموعة {group_id}!")
-    return ConversationHandler.END
-
-async def add_attempts(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    await query.message.reply_text("أدخل عدد المحاولات لإضافتها:")
-    return ADD_ATTEMPTS
-
-async def add_attempts_value(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    attempts = update.message.text
-    if not attempts.isdigit():
-        await update.message.reply_text("يرجى إدخال رقم صحيح!")
-        return ADD_ATTEMPTS
-    user_id = context.user_data["user_id"]
-    group_id = context.user_data["group_id"]
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("UPDATE user_attempts SET attempts = attempts + ? WHERE user_id = ? AND group_id = ?", (int(attempts), user_id, group_id))
-    conn.commit()
-    conn.close()
-    await update.message.reply_text(f"تم إضافة {attempts} محاولات للمستخدم {user_id} في المجموعة {group_id}!")
-    return ConversationHandler.END
-
-async def del_attempts(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    await query.message.reply_text("أدخل عدد المحاولات للحذف:")
-    return DEL_ATTEMPTS
-
-async def del_attempts_value(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    attempts = update.message.text
-    if not attempts.isdigit():
-        await update.message.reply_text("يرجى إدخال رقم صحيح!")
-        return DEL_ATTEMPTS
-    user_id = context.user_data["user_id"]
-    group_id = context.user_data["group_id"]
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("UPDATE user_attempts SET attempts = attempts - ? WHERE user_id = ? AND group_id = ?", (int(attempts), user_id, group_id))
-    conn.commit()
-    conn.close()
-    await update.message.reply_text(f"تم حذف {attempts} محاولات من المستخدم {user_id} في المجموعة {group_id}!")
-    return ConversationHandler.END
+    query.answer()
+    tz = query.data.split("_")[1]
+    
+    config = load_config()
+    config["timezone"] = tz
+    save_config(config)
+    
+    query.edit_message_text(
+        text=f"تم تغيير المنطقة الزمنية إلى {tz}.",
+        reply_markup=message_style_keyboard(),
+    )
+    return SET_MESSAGE_STYLE
 
 # إدارة المسؤولين
-async def manage_admins(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def manage_admins(update: Update, context: CallbackContext):
     query = update.callback_query
-    await query.answer()
-    keyboard = [
-        [InlineKeyboardButton("إضافة مسؤول", callback_data="add_admin")],
-        [InlineKeyboardButton("إزالة مسؤول", callback_data="del_admin")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await query.message.reply_text("اختر إجراءً لإدارة المسؤولين:", reply_markup=reply_markup)
+    query.answer()
+    query.edit_message_text(
+        text="إدارة المسؤولين:",
+        reply_markup=admins_management_keyboard(),
+    )
+    return MANAGE_ADMINS
+
+def add_admin(update: Update, context: CallbackContext):
+    query = update.callback_query
+    query.answer()
+    query.edit_message_text(text="أرسل معرف المستخدم (User ID) الذي تريد إضافته كمسؤول:")
     return ADD_ADMIN
 
-async def add_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    await query.message.reply_text("أدخل User ID للمسؤول الجديد:")
-    return ADD_ADMIN
-
-async def add_admin_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    admin_id = update.message.text
-    if not admin_id.isdigit():
-        await update.message.reply_text("يرجى إدخال User ID صحيح!")
+def process_add_admin(update: Update, context: CallbackContext):
+    try:
+        new_admin_id = int(update.message.text.strip())
+    except ValueError:
+        update.message.reply_text("معرف المستخدم يجب أن يكون رقماً. الرجاء إدخال معرف صحيح.")
         return ADD_ADMIN
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("INSERT OR IGNORE INTO admins (admin_id) VALUES (?)", (admin_id,))
-    conn.commit()
-    conn.close()
-    await update.message.reply_text(f"تم إضافة المسؤول {admin_id} بنجاح!")
-    return ConversationHandler.END
+    
+    config = load_config()
+    if new_admin_id in config["admins"]:
+        update.message.reply_text("هذا المستخدم مسؤول بالفعل.")
+    else:
+        config["admins"].append(new_admin_id)
+        save_config(config)
+        update.message.reply_text(f"تمت إضافة المستخدم {new_admin_id} كمسؤول بنجاح.")
+    
+    return back_to_admin(update, context)
 
-async def del_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def remove_admin(update: Update, context: CallbackContext):
     query = update.callback_query
-    await query.answer()
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("SELECT admin_id FROM admins")
-    admins = c.fetchall()
-    conn.close()
-    if not admins:
-        await query.message.reply_text("لا يوجد مسؤولين مضافين!")
-        return ConversationHandler.END
-    keyboard = [[InlineKeyboardButton(admin[0], callback_data=f"del_admin_{admin[0]}")] for admin in admins]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await query.message.reply_text("اختر المسؤول لإزالته:", reply_markup=reply_markup)
-    return DEL_ADMIN
+    query.answer()
+    query.edit_message_text(text="أرسل معرف المستخدم (User ID) الذي تريد إزالته من المسؤولين:")
+    return REMOVE_ADMIN
 
-async def del_admin_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    admin_id = query.data.split("_")[-1]
+def process_remove_admin(update: Update, context: CallbackContext):
+    try:
+        admin_id = int(update.message.text.strip())
+    except ValueError:
+        update.message.reply_text("معرف المستخدم يجب أن يكون رقماً. الرجاء إدخال معرف صحيح.")
+        return REMOVE_ADMIN
+    
+    config = load_config()
     if admin_id == ADMIN_ID:
-        await query.message.reply_text("لا يمكن حذف المسؤول الافتراضي!")
-        return ConversationHandler.END
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("DELETE FROM admins WHERE admin_id = ?", (admin_id,))
-    conn.commit()
-    conn.close()
-    await query.message.reply_text(f"تم إزالة المسؤول {admin_id} بنجاح!")
-    return ConversationHandler.END
+        update.message.reply_text("لا يمكن إزالة المسؤول الرئيسي.")
+    elif admin_id in config["admins"]:
+        config["admins"].remove(admin_id)
+        save_config(config)
+        update.message.reply_text(f"تمت إزالة المستخدم {admin_id} من المسؤولين بنجاح.")
+    else:
+        update.message.reply_text("هذا المستخدم ليس مسؤولاً.")
+    
+    return back_to_admin(update, context)
 
-# زر Copy Code
-async def copy_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# إدارة محاولات المستخدمين
+def manage_attempts(update: Update, context: CallbackContext):
     query = update.callback_query
-    await query.answer()
-    group_id = query.data.split("_")[-1]
-    user_id = str(query.from_user.id)
-    attempts = check_attempts(user_id, group_id)
+    query.answer()
+    query.edit_message_text(
+        text="إدارة محاولات المستخدمين:",
+        reply_markup=attempts_management_keyboard(),
+    )
+    return MANAGE_ATTEMPTS
+
+def select_group_attempts(update: Update, context: CallbackContext):
+    query = update.callback_query
+    query.answer()
+    
+    config = load_config()
+    users = load_users()
+    
+    keyboard = []
+    for group_id in config["groups"]:
+        # حساب عدد المستخدمين في هذه المجموعة
+        user_count = sum(1 for user_data in users.values() if group_id in user_data.get("attempts", {}))
+        keyboard.append([
+            InlineKeyboardButton(
+                f"المجموعة: {group_id} ({user_count} مستخدم)",
+                callback_data=f"select_group_{group_id}",
+            ),
+        ])
+    
+    keyboard.append([
+        InlineKeyboardButton("رجوع", callback_data="manage_attempts"),
+    ])
+    
+    query.edit_message_text(
+        text="اختر المجموعة لعرض مستخدميها:",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+    )
+    return SELECT_GROUP_ATTEMPTS
+
+def process_select_group_attempts(update: Update, context: CallbackContext):
+    query = update.callback_query
+    query.answer()
+    group_id = query.data.split("_")[2]
+    context.user_data["current_group_attempts"] = group_id
+    
+    users = load_users()
+    group_users = []
+    
+    for user_id, user_data in users.items():
+        if group_id in user_data.get("attempts", {}):
+            attempts = user_data["attempts"][group_id]
+            group_users.append((user_id, attempts))
+    
+    if not group_users:
+        query.edit_message_text(
+            text="لا يوجد مستخدمين في هذه المجموعة.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("رجوع", callback_data="select_group_attempts")],
+            ]),
+        )
+        return SELECT_GROUP_ATTEMPTS
+    
+    keyboard = []
+    for user_id, attempts in group_users:
+        try:
+            user = context.bot.get_chat(user_id)
+            name = user.first_name or user.username or str(user_id)
+        except:
+            name = str(user_id)
+        
+        keyboard.append([
+            InlineKeyboardButton(
+                f"{name} (المحاولات: {attempts})",
+                callback_data=f"select_user_{group_id}_{user_id}",
+            ),
+        ])
+    
+    keyboard.append([
+        InlineKeyboardButton("رجوع", callback_data="select_group_attempts"),
+    ])
+    
+    query.edit_message_text(
+        text=f"مستخدمي المجموعة {group_id}:",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+    )
+    return SELECT_USER_ATTEMPTS
+
+def process_select_user_attempts(update: Update, context: CallbackContext):
+    query = update.callback_query
+    query.answer()
+    _, _, group_id, user_id = query.data.split("_")
+    user_id = int(user_id)
+    
+    users = load_users()
+    attempts = users.get(str(user_id), {}).get("attempts", {}).get(group_id, 0)
+    
+    try:
+        user = context.bot.get_chat(user_id)
+        name = user.first_name or user.username or str(user_id)
+    except:
+        name = str(user_id)
+    
+    config = load_config()
+    banned = user_id in config.get("banned_users", [])
+    
+    text = f"إدارة محاولات المستخدم:\n"
+    text += f"الاسم: {name}\n"
+    text += f"المعرف: {user_id}\n"
+    text += f"المجموعة: {group_id}\n"
+    text += f"المحاولات المتبقية: {attempts}\n"
+    text += f"الحالة: {'محظور' if banned else 'نشط'}"
+    
+    query.edit_message_text(
+        text=text,
+        reply_markup=user_attempts_keyboard(group_id, user_id),
+    )
+    return SELECT_USER_ATTEMPTS
+
+def ban_user(update: Update, context: CallbackContext):
+    query = update.callback_query
+    query.answer()
+    _, _, group_id, user_id = query.data.split("_")
+    user_id = int(user_id)
+    
+    config = load_config()
+    if user_id not in config.get("banned_users", []):
+        config["banned_users"].append(user_id)
+        save_config(config)
+        query.edit_message_text(text=f"تم حظر المستخدم {user_id} بنجاح.")
+    else:
+        config["banned_users"].remove(user_id)
+        save_config(config)
+        query.edit_message_text(text=f"تم إلغاء حظر المستخدم {user_id} بنجاح.")
+    
+    return process_select_user_attempts(update, context)
+
+def add_attempts(update: Update, context: CallbackContext):
+    query = update.callback_query
+    query.answer()
+    _, _, group_id, user_id = query.data.split("_")
+    context.user_data["current_user_attempts"] = (group_id, int(user_id))
+    query.edit_message_text(text="أرسل عدد المحاولات التي تريد إضافتها:")
+    return ADD_ATTEMPTS
+
+def process_add_attempts(update: Update, context: CallbackContext):
+    try:
+        attempts = int(update.message.text.strip())
+        if attempts <= 0:
+            raise ValueError
+    except ValueError:
+        update.message.reply_text("الرجاء إدخال عدد صحيح موجب.")
+        return ADD_ATTEMPTS
+    
+    group_id, user_id = context.user_data["current_user_attempts"]
+    
+    users = load_users()
+    if str(user_id) not in users:
+        users[str(user_id)] = {"attempts": {}}
+    
+    if group_id not in users[str(user_id)]["attempts"]:
+        users[str(user_id)]["attempts"][group_id] = 0
+    
+    users[str(user_id)]["attempts"][group_id] += attempts
+    save_users(users)
+    
+    update.message.reply_text(f"تمت إضافة {attempts} محاولة للمستخدم {user_id} في المجموعة {group_id} بنجاح.")
+    return back_to_admin(update, context)
+
+def remove_attempts(update: Update, context: CallbackContext):
+    query = update.callback_query
+    query.answer()
+    _, _, group_id, user_id = query.data.split("_")
+    context.user_data["current_user_attempts"] = (group_id, int(user_id))
+    query.edit_message_text(text="أرسل عدد المحاولات التي تريد حذفها:")
+    return REMOVE_ATTEMPTS
+
+def process_remove_attempts(update: Update, context: CallbackContext):
+    try:
+        attempts = int(update.message.text.strip())
+        if attempts <= 0:
+            raise ValueError
+    except ValueError:
+        update.message.reply_text("الرجاء إدخال عدد صحيح موجب.")
+        return REMOVE_ATTEMPTS
+    
+    group_id, user_id = context.user_data["current_user_attempts"]
+    
+    users = load_users()
+    if str(user_id) not in users or group_id not in users[str(user_id)].get("attempts", {}):
+        update.message.reply_text("هذا المستخدم ليس لديه محاولات في هذه المجموعة.")
+        return back_to_admin(update, context)
+    
+    current_attempts = users[str(user_id)]["attempts"][group_id]
+    if attempts > current_attempts:
+        attempts = current_attempts
+    
+    users[str(user_id)]["attempts"][group_id] -= attempts
+    
+    if users[str(user_id)]["attempts"][group_id] <= 0:
+        del users[str(user_id)]["attempts"][group_id]
+        if not users[str(user_id)]["attempts"]:
+            del users[str(user_id)]["attempts"]
+    
+    save_users(users)
+    
+    update.message.reply_text(f"تم حذف {attempts} محاولة من المستخدم {user_id} في المجموعة {group_id} بنجاح.")
+    return back_to_admin(update, context)
+
+# إرسال الرسائل الدورية
+def send_periodic_messages(context: CallbackContext):
+    config = load_config()
+    users = load_users()
+    current_time = time.time()
+    
+    for group_id, group_data in config["groups"].items():
+        if not group_data["active"] or not group_data["totp_secret"]:
+            continue
+        
+        if group_data["next_run"] is None or current_time >= group_data["next_run"]:
+            # توليد وإرسال الرسالة
+            send_2fa_message(context.bot, group_id, group_data["totp_secret"], config)
+            
+            # تحديث وقت التشغيل التالي
+            interval_seconds = group_data["interval"] * 60
+            config["groups"][group_id]["next_run"] = current_time + interval_seconds
+            save_config(config)
+
+def send_2fa_message(bot, group_id, totp_secret, config):
+    try:
+        # توليد رمز المصادقة
+        code = generate_2fa_code(totp_secret)
+        
+        # حساب الوقت المتبقي والوقت التالي
+        current_time = get_current_time(config["timezone"])
+        remaining_seconds = 30 - (current_time.second % 30)
+        next_time = current_time + timedelta(seconds=remaining_seconds)
+        
+        # بناء الرسالة حسب النمط المختار
+        if config["message_style"] == 1:
+            message = "🔐 2FA Verification Code\n\n"
+            message += f"Next code at: {format_time(next_time)}"
+        elif config["message_style"] == 2:
+            message = "🔐 2FA Verification Code\n\n"
+            minutes = config["groups"][group_id]["interval"]
+            message += f"Next code in: {minutes} minutes\n"
+            message += f"Next code at: {format_time(next_time)}"
+        else:  # النمط 3
+            message = "🔐 2FA Verification Code\n"
+            minutes = config["groups"][group_id]["interval"]
+            message += f"Next code in: {minutes} minutes\n"
+            message += f"Correct Time: {format_time(current_time)}\n"
+            message += f"Next Code at: {format_time(next_time)}"
+        
+        # إضافة زر النسخ
+        keyboard = [[
+            InlineKeyboardButton("Copy Code", callback_data=f"get_code_{group_id}"),
+        ]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        # إرسال الرسالة إلى المجموعة
+        bot.send_message(
+            chat_id=group_id,
+            text=message,
+            reply_markup=reply_markup,
+        )
+    except Exception as e:
+        logger.error(f"Error sending 2FA message to group {group_id}: {e}")
+
+def handle_code_request(update: Update, context: CallbackContext):
+    query = update.callback_query
+    query.answer()
+    
+    # استخراج بيانات الطلب
+    _, _, group_id = query.data.split("_")
+    user_id = query.from_user.id
+    
+    # التحقق من الحظر
+    config = load_config()
+    if user_id in config.get("banned_users", []):
+        query.edit_message_text(text="تم حظرك من استخدام هذه الميزة.")
+        return
+    
+    # التحقق من المحاولات المتبقية
+    users = load_users()
+    user_data = users.get(str(user_id), {})
+    attempts = user_data.get("attempts", {}).get(group_id, 0)
+    
     if attempts <= 0:
-        await query.message.reply_text("لقد نفدت محاولاتك! انتظر حتى منتصف الليل لتحديث المحاولات.")
+        query.edit_message_text(text="لا يوجد لديك محاولات متبقية. الرجاء الانتظار حتى منتصف الليل.")
         return
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("SELECT totp_secret FROM groups WHERE group_id = ?", (group_id,))
-    result = c.fetchone()
-    if not result:
-        await query.message.reply_text("المجموعة غير موجودة!")
+    
+    # توليد وإرسال الرمز
+    group_data = config["groups"].get(group_id, {})
+    if not group_data or not group_data.get("totp_secret"):
+        query.edit_message_text(text="حدث خطأ في توليد الرمز. الرجاء إعلام المسؤول.")
         return
-    totp_secret = result[0]
-    code = generate_2fa_code(totp_secret)
-    c.execute("UPDATE user_attempts SET attempts = attempts - 1 WHERE user_id = ? AND group_id = ?", (user_id, group_id))
-    conn.commit()
-    conn.close()
-    message = f"🔐 رمز المصادقة الثنائية: `{code}`\n\n" \
-              f"عدد المحاولات المتبقية: {attempts - 1}\n" \
-              f"⚠️ تحذير: الرمز صالح لمدة 30 ثانية فقط!\n" \
-              f"⏳ صلاحية الرمز المتبقية: 30 ثانية"
-    await context.bot.send_message(chat_id=user_id, text=message, parse_mode="Markdown")
-    await query.message.reply_text("تم إرسال رمز المصادقة إلى دردشتك الخاصة!")
+    
+    code = generate_2fa_code(group_data["totp_secret"])
+    remaining_time = 30 - (get_current_time(config["timezone"]).second % 30)
+    
+    # تحديث المحاولات المتبقية
+    users[str(user_id)] = users.get(str(user_id), {})
+    users[str(user_id)]["attempts"] = users[str(user_id)].get("attempts", {})
+    users[str(user_id)]["attempts"][group_id] = attempts - 1
+    save_users(users)
+    
+    # إرسال الرسالة الخاصة
+    try:
+        context.bot.send_message(
+            chat_id=user_id,
+            text=f"🔐 رمز المصادقة:\n\n"
+                 f"`{code}`\n\n"
+                 f"المحاولات المتبقية: {attempts - 1}\n"
+                 f"تحذير: هذا الرمز صالح لمدة {remaining_time} ثانية فقط!\n\n"
+                 f"الوقت المتبقي: {remaining_time} ثانية",
+            parse_mode="Markdown",
+        )
+        query.edit_message_text(text="تم إرسال رمز المصادقة إليك في الرسائل الخاصة.")
+    except Exception as e:
+        logger.error(f"Error sending private message to user {user_id}: {e}")
+        query.edit_message_text(text="لا يمكن إرسال الرسالة الخاصة. الرجاء التأكد من أنك بدأت محادثة مع البوت.")
 
-# تشغيل البوت
-if __name__ == "__main__":
-    init_db()
-    app = Application.builder().token(TOKEN).build()
+# إعادة تعيين المحاولات اليومية
+def reset_daily_attempts(context: CallbackContext):
+    users = load_users()
+    for user_data in users.values():
+        if "attempts" in user_data:
+            del user_data["attempts"]
+    save_users(users)
+    logger.info("تم إعادة تعيين المحاولات اليومية لجميع المستخدمين.")
 
-    # محادثة إدارة المجموعات
-    group_conv = ConversationHandler(
-        entry_points=[CallbackQueryHandler(manage_groups, pattern="manage_groups")],
+# تهيئة البوت
+def main():
+    # إنشاء المحدث وتحديث البيانات
+    updater = Updater(TOKEN, use_context=True)
+    dp = updater.dispatcher
+    
+    # إعداد المحادثة مع المسؤول
+    admin_conv_handler = ConversationHandler(
+        entry_points=[CommandHandler('admin', admin_command)],
         states={
-            ADD_GROUP: [
-                CallbackQueryHandler(add_group, pattern="add_group"),
-                CommandHandler("admin", admin_command),
-                MessageHandler(None, add_group_id),
-                MessageHandler(None, add_totp_secret)
-            ],
-            EDIT_GROUP: [
-                CallbackQueryHandler(edit_group, pattern="edit_group"),
-                CallbackQueryHandler(edit_group_select, pattern="edit_group_"),
-                MessageHandler(None, edit_totp_secret)
-            ],
-            DEL_GROUP: [
-                CallbackQueryHandler(del_group, pattern="del_group"),
-                CallbackQueryHandler(del_group_select, pattern="del_group_")
-            ]
-        },
-        fallbacks=[]
-    )
-
-    # محادثة إدارة الفترة
-    period_conv = ConversationHandler(
-        entry_points=[CallbackQueryHandler(manage_period, pattern="manage_period")],
-        states={
-            SET_PERIOD: [
-                CallbackQueryHandler(set_period, pattern="set_period_"),
-                CallbackQueryHandler(set_period_value, pattern="period_|stop_period|start_period")
-            ]
-        },
-        fallbacks=[]
-    )
-
-    # محادثة إدارة شكل/توقيت الرسالة
-    message_conv = ConversationHandler(
-        entry_points=[CallbackQueryHandler(manage_message, pattern="manage_message")],
-        states={
-            SET_MESSAGE_FORMAT: [
-                CallbackQueryHandler(set_message_format, pattern="set_message_"),
-                CallbackQueryHandler(set_message_value, pattern="format_|tz_")
-            ]
-        },
-        fallbacks=[]
-    )
-
-    # محادثة إدارة المحاولات
-    attempts_conv = ConversationHandler(
-        entry_points=[CallbackQueryHandler(manage_attempts, pattern="manage_attempts")],
-        states={
-            SELECT_GROUP: [CallbackQueryHandler(select_group, pattern="select_group_")],
-            SELECT_USER: [
-                CallbackQueryHandler(select_user, pattern="select_user_"),
-                CallbackQueryHandler(ban_user, pattern="ban_user"),
-                CallbackQueryHandler(add_attempts, pattern="add_attempts"),
-                CallbackQueryHandler(del_attempts, pattern="del_attempts")
-            ],
-            ADD_ATTEMPTS: [MessageHandler(None, add_attempts_value)],
-            DEL_ATTEMPTS: [MessageHandler(None, del_attempts_value)]
-        },
-        fallbacks=[]
-    )
-
-    # محادثة إدارة المسؤولين
-    admin_conv = ConversationHandler(
-        entry_points=[CallbackQueryHandler(manage_admins, pattern="manage_admins")],
-        states={
-            ADD_ADMIN: [
-                CallbackQueryHandler(add_admin, pattern="add_admin"),
-                MessageHandler(None, add_admin_id)
-            ],
-            DEL_ADMIN: [
-                CallbackQueryHandler(del_admin, pattern="del_admin"),
-                CallbackQueryHandler(del_admin_id, pattern="del_admin_")
-            ]
-        },
-        fallbacks=[]
-    )
-
-    # إضافة المعالجات
-    app.add_handler(CommandHandler("admin", admin_command))
-    app.add_handler(group_conv)
-    app.add_handler(period_conv)
-    app.add_handler(message_conv)
-    app.add_handler(attempts_conv)
-    app.add_handler(admin_conv)
-    app.add_handler(CallbackQueryHandler(copy_code, pattern="copy_code_"))
-
-    # تشغيل الجدولة في خيط منفصل
-    threading.Thread(target=schedule_messages, daemon=True).start()
-
-    # تشغيل البوت
-    app.run_polling()
+            ADMIN_MENU: [
+                CallbackQueryHandler(manage_groups, pattern="^manage_groups$"),
+                CallbackQueryHandler(set_interval, pattern="^set_interval$"),
+                CallbackQueryHandler(set_message_style, pattern="^set_message_style$"),
+                CallbackQueryHandler(manage_attempts, pattern="^manage_attempts$"),
+                CallbackQueryHandler(manage_admins, pattern="^manage_admins
