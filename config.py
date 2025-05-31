@@ -1,11 +1,10 @@
 # /home/ec2-user/projects/ChatGPTPlus2FABot/config.py
-# ملف الإعدادات لبوت ChatGPTPlus2FABot
 
-# توكن البوت الخاص بتليجرام (يمكن الحصول عليه من BotFather)
-TOKEN = "8119053401:AAHuqgTkiq6M8rT9VSHYEnIl96BHt9lXIZM"
+# --- Telegram Bot Configuration ---
+TOKEN = "8119053401:AAHuqgTkiq6M8rT9VSHYEnIl96BHt9lXIZM"  # استبدل هذا بالتوكن الخاص ببوتك
 
-# معرف المستخدم للمسؤول الأولي
-INITIAL_ADMIN_ID = 764559466
+# --- Admin Configuration ---
+INITIAL_ADMIN_ID = 764559466  # استبدل هذا بمعرف المستخدم الخاص بك ليكون المسؤول الأولي
 
-# اسم ملف قاعدة البيانات
-DB_NAME = "chatgptplus2fa.db"
+# --- Database Configuration ---
+DB_NAME = "chatgptplus2fa_bot.db" # اسم ملف قاعدة البيانات

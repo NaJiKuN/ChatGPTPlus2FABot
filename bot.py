@@ -22,7 +22,7 @@ import keyboards as kb
 import totp_utils as totp
 
 # تكوين السجل (logging)
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.INFO, format=\"%(asctime)s - %(name)s - %(levelname)s - %(message)s\")
 logger = logging.getLogger(__name__)
 
 # حالات المحادثة
@@ -57,26 +57,18 @@ async def send_periodic_message(context: ContextTypes.DEFAULT_TYPE):
     totp_secret = group_settings["totp_secret"]
     message_format = group_settings["message_format"]
     timezone_str = group_settings["timezone"]
-    time_format = group_settings["time_format"] if "time_format" in group_settings else 24
     
     try:
         # محاولة الحصول على المنطقة الزمنية
         timezone = pytz.timezone(timezone_str)
     except pytz.exceptions.UnknownTimeZoneError:
-        logger.warning(f"منطقة زمنية غير معروفة {group_settings['timezone']} للمجموعة {group_settings['group_id']}. استخدام GMT كافتراضي.")
+        logger.warning(f"منطقة زمنية غير معروفة {group_settings["timezone"]} للمجموعة {group_settings["group_id"]}. استخدام GMT كافتراضي.")
         timezone = pytz.timezone("GMT")
     
     # الحصول على الوقت الحالي والوقت المتبقي
     now = datetime.datetime.now(timezone)
     remaining_seconds = totp.get_remaining_seconds()
-    
-    # تنسيق الوقت حسب نظام 12 أو 24 ساعة
-    if time_format == 12:
-        next_code_time = (now + datetime.timedelta(seconds=remaining_seconds)).strftime("%I:%M:%S %p")
-        current_time_str = now.strftime("%I:%M:%S %p")
-    else:
-        next_code_time = (now + datetime.timedelta(seconds=remaining_seconds)).strftime("%H:%M:%S")
-        current_time_str = now.strftime("%H:%M:%S")
+    next_code_time = (now + datetime.timedelta(seconds=remaining_seconds)).strftime("%H:%M:%S")
     
     # إنشاء نص الرسالة حسب التنسيق المختار
     if message_format == 1:
@@ -84,12 +76,13 @@ async def send_periodic_message(context: ContextTypes.DEFAULT_TYPE):
     elif message_format == 2:
         message_text = f"🔐 *رمز المصادقة التالي في الساعة:* `{next_code_time}`\n⏱ *المدة المتبقية للرمز الحالي:* `{remaining_seconds} ثانية`"
     elif message_format == 3:
-        message_text = f"🔐 *رمز المصادقة التالي في الساعة:* `{next_code_time}`\n🕒 *الوقت الحالي:* `{current_time_str}`"
+        current_time = now.strftime("%H:%M:%S")
+        message_text = f"🔐 *رمز المصادقة التالي في الساعة:* `{next_code_time}`\n🕒 *الوقت الحالي:* `{current_time}`"
     else:
         message_text = f"🔐 *رمز المصادقة متاح الآن*"
     
     # إضافة تعليمات
-    message_text += "\n\nاضغط على زر 'نسخ الرمز' أدناه للحصول على رمز المصادقة في رسالة خاصة."
+    message_text += "\n\nاضغط على زر \'نسخ الرمز\' أدناه للحصول على رمز المصادقة في رسالة خاصة."
     
     # إنشاء لوحة المفاتيح
     keyboard = kb.request_code_keyboard(group_id)
@@ -159,7 +152,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             "مرحباً بك في بوت ChatGPTPlus2FABot! 👋\n\n"
             "هذا البوت مخصص لإرسال رموز المصادقة الثنائية (2FA) للمجموعات المسجلة.\n"
-            "يمكنك الحصول على الرمز عبر الضغط على زر 'نسخ الرمز' في الرسائل المرسلة إلى المجموعة."
+            "يمكنك الحصول على الرمز عبر الضغط على زر \'نسخ الرمز\' في الرسائل المرسلة إلى المجموعة."
         )
 
 async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -411,25 +404,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     reply_markup=kb.format_options_keyboard(group_id)
                 )
     
-    elif data.startswith("format_set_time_format:"):
-        parts = data.split(":")
-        group_id = parts[1]
-        time_format = int(parts[2])
-        
-        success, message = db.update_group_time_format(group_id, time_format)
-        if success:
-            await query.edit_message_text(
-                f"✅ {message}\n\n"
-                "يرجى اختيار إجراء آخر:",
-                reply_markup=kb.format_options_keyboard(group_id)
-            )
-        else:
-            await query.edit_message_text(
-                f"❌ {message}\n\n"
-                "يرجى المحاولة مرة أخرى:",
-                reply_markup=kb.format_options_keyboard(group_id)
-            )
-    
     # معالجة أزرار إدارة محاولات المستخدمين
     elif data.startswith("attempts_select_group:"):
         group_id = data.split(":")[1]
@@ -575,7 +549,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         
         if attempts_left <= 0:
-            await query.answer(f"⚠️ لقد استنفدت محاولاتك ({group_settings['max_attempts']}) لنسخ الرمز لهذه المجموعة. سيتم تحديث المحاولات عند منتصف الليل.", show_alert=True)
+            await query.answer(f"⚠️ لقد استنفدت محاولاتك ({group_settings["max_attempts"]}) لنسخ الرمز لهذه المجموعة.", show_alert=True)
             return
         
         # توليد رمز TOTP
@@ -596,8 +570,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                      f"👤 المحاولات المتبقية لك: *{attempts_left}*",
                 parse_mode=ParseMode.MARKDOWN
             )
-            # إشعار للمستخدم بأن الرمز تم إرساله
-            await query.answer("✅ تم إرسال رمز المصادقة إليك في رسالة خاصة. المحاولات المتبقية: " + str(attempts_left), show_alert=True)
+            await query.answer("✅ تم إرسال رمز المصادقة إليك في رسالة خاصة.")
         except TelegramError as e:
             logger.error(f"خطأ في إرسال رمز المصادقة إلى المستخدم {user_id}: {e}")
             await query.answer("❌ حدث خطأ في إرسال الرمز. يرجى التأكد من أنك بدأت محادثة مع البوت أولاً.", show_alert=True)
@@ -704,8 +677,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             group_settings["timezone"],
             group_settings["max_attempts"],
             group_settings["is_active"],
-            group_settings["job_id"],
-            group_settings.get("time_format", 24)
+            group_settings["job_id"]
         )
         
         if success:
@@ -936,7 +908,7 @@ def main():
     for group in groups:
         if group["is_active"]:
             schedule_periodic_message(application, group["group_id"])
-            logger.info(f"تمت جدولة المهام الدورية للمجموعة {group['group_id']}")
+            logger.info(f"تمت جدولة المهام الدورية للمجموعة {group[\"group_id\"]}")
     
     # بدء تشغيل البوت
     application.run_polling()
