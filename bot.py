@@ -1273,9 +1273,7 @@ def main():
                 CallbackQueryHandler(manage_interval, pattern="^manage_interval$"),
                 CallbackQueryHandler(manage_message_style, pattern="^manage_message_style$"),
                 CallbackQueryHandler(manage_user_attempts, pattern="^manage_user_attempts$"),
-                CallbackQueryHandler(manage_admins, pattern="^manage_admins$"),
-                CallbackQueryHandler(cancel, pattern="^cancel$")
-            ],
+                CallbackQueryHandler(manage_admins, pattern="^manage_admins$"),                CallbackQueryHandler(cancel, pattern="^cancel$")\n            ],
             MANAGE_GROUPS: [
                 CallbackQueryHandler(add_group, pattern="^add_group$"),
                 CallbackQueryHandler(delete_group, pattern="^delete_group$"),
