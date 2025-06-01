@@ -24,7 +24,7 @@ from telegram.ext import (
 
 # تكوين السجلات
 logging.basicConfig(
-    format=\'%(asctime)s - %(name)s - %(levelname)s - %(message)s\',
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s\',
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
@@ -79,7 +79,7 @@ def load_translations():
                 lang_code = filename.split(".")[0]
                 filepath = os.path.join(LANG_DIR, filename)
                 try:
-                    with open(filepath, \'r\', encoding=\'utf-8\') as f:
+                    with open(filepath, 'r', encoding='utf-8') as f:
                         translations[lang_code] = json.load(f)
                     logger.info(f"تم تحميل ملف اللغة: {filename}")
                 except json.JSONDecodeError:
@@ -158,7 +158,7 @@ def load_config():
     """تحميل ملف الإعدادات والتأكد من وجود default_attempts"""
     if os.path.exists(CONFIG_FILE):
         try:
-            with open(CONFIG_FILE, \'r\', encoding=\'utf-8\') as f:
+            with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
                 config = json.load(f)
                 if "admins" not in config: config["admins"] = [ADMIN_ID]
                 config_changed = False
@@ -176,19 +176,19 @@ def load_config():
                 return config
         except json.JSONDecodeError:
             logger.error(f"خطأ في قراءة ملف الإعدادات {CONFIG_FILE}. سيتم استخدام الإعدادات الافتراضية.")
-            with open(CONFIG_FILE, \'w\', encoding=\'utf-8\') as f: json.dump(DEFAULT_CONFIG, f, ensure_ascii=False, indent=4)
+            with open(CONFIG_FILE, 'w', encoding='utf-8') as f: json.dump(DEFAULT_CONFIG, f, ensure_ascii=False, indent=4)
             return DEFAULT_CONFIG
         except Exception as e:
             logger.error(f"خطأ غير متوقع عند تحميل الإعدادات: {e}. سيتم استخدام الإعدادات الافتراضية.")
             return DEFAULT_CONFIG
     else:
-        with open(CONFIG_FILE, \'w\', encoding=\'utf-8\') as f: json.dump(DEFAULT_CONFIG, f, ensure_ascii=False, indent=4)
+        with open(CONFIG_FILE, 'w\', encoding=\'utf-8\') as f: json.dump(DEFAULT_CONFIG, f, ensure_ascii=False, indent=4)
         return DEFAULT_CONFIG
 
 def save_config(config):
     """حفظ ملف الإعدادات"""
     try:
-        with open(CONFIG_FILE, \'w\', encoding=\'utf-8\') as f:
+        with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
             json.dump(config, f, ensure_ascii=False, indent=4)
     except Exception as e: logger.error(f"فشل حفظ ملف الإعدادات {CONFIG_FILE}: {e}")
 
@@ -196,7 +196,7 @@ def load_users():
     """تحميل بيانات المستخدمين والتأكد من وجود مفتاح اللغة"""
     if os.path.exists(USERS_FILE):
         try:
-            with open(USERS_FILE, \'r\', encoding=\'utf-8\') as f:
+            with open(USERS_FILE, 'r', encoding='utf-8') as f:
                 users = json.load(f)
                 # التأكد من وجود مفتاح اللغة لكل مستخدم
                 users_changed = False
@@ -208,19 +208,19 @@ def load_users():
                 return users
         except json.JSONDecodeError:
              logger.error(f"خطأ في قراءة ملف المستخدمين {USERS_FILE}. سيتم استخدام البيانات الافتراضية.")
-             with open(USERS_FILE, \'w\', encoding=\'utf-8\') as f: json.dump(DEFAULT_USERS, f, ensure_ascii=False, indent=4)
+             with open(USERS_FILE, 'w', encoding='utf-8') as f: json.dump(DEFAULT_USERS, f, ensure_ascii=False, indent=4)
              return DEFAULT_USERS
         except Exception as e:
              logger.error(f"خطأ غير متوقع عند تحميل المستخدمين: {e}. سيتم استخدام البيانات الافتراضية.")
              return DEFAULT_USERS
     else:
-        with open(USERS_FILE, \'w\', encoding=\'utf-8\') as f: json.dump(DEFAULT_USERS, f, ensure_ascii=False, indent=4)
+        with open(USERS_FILE, 'w', encoding='utf-8') as f: json.dump(DEFAULT_USERS, f, ensure_ascii=False, indent=4)
         return DEFAULT_USERS
 
 def save_users(users):
     """حفظ بيانات المستخدمين"""
     try:
-        with open(USERS_FILE, \'w\', encoding=\'utf-8\') as f:
+        with open(USERS_FILE, 'w', encoding='utf-8') as f:
             json.dump(users, f, ensure_ascii=False, indent=4)
     except Exception as e: logger.error(f"فشل حفظ ملف المستخدمين {USERS_FILE}: {e}")
 
@@ -1402,13 +1402,13 @@ async def handle_copy_code(update: Update, context: ContextTypes.DEFAULT_TYPE, g
     message_text_md = _(user.id, "code_copied_alert_md", code=code, remaining_validity=remaining_validity, remaining_attempts=remaining_attempts)
     
     try:
-        await query.answer(message_text_md2, show_alert=True, parse_mode=\'MarkdownV2\')
+        await query.answer(message_text_md2, show_alert=True, parse_mode='MarkdownV2')
     except Exception as e:
         logger.warning(f"فشل إرسال الرمز كـ Alert (MarkdownV2): {e}. محاولة Markdown.")
-        try: await query.answer(message_text_md, show_alert=True, parse_mode=\'Markdown\')
+        try: await query.answer(message_text_md, show_alert=True, parse_mode='Markdown')
         except Exception as e2:
             logger.warning(f"فشل إرسال الرمز كـ Alert (Markdown): {e2}. محاولة رسالة عادية.")
-            try: await context.bot.send_message(chat_id=user.id, text=message_text_md, parse_mode=\'Markdown\')
+            try: await context.bot.send_message(chat_id=user.id, text=message_text_md, parse_mode='Markdown')
             except Exception as send_error:
                  logger.error(f"فشل إرسال الرمز كرسالة للمستخدم {user_id}: {send_error}")
                  await query.answer(_(user.id, "error_sending_code_alert"), show_alert=True)
@@ -1441,113 +1441,113 @@ def main():
         entry_points=[CommandHandler("admin", admin_command)],
         states={
             MAIN_MENU: [
-                CallbackQueryHandler(manage_groups, pattern=\"^manage_groups$\"),
-                CallbackQueryHandler(manage_interval, pattern=\"^manage_interval$\"),
-                CallbackQueryHandler(manage_message_style, pattern=\"^manage_message_style$\"),
-                CallbackQueryHandler(manage_user_attempts, pattern=\"^manage_user_attempts$\"),
-                CallbackQueryHandler(manage_admins, pattern=\"^manage_admins$\"),
-                CallbackQueryHandler(manage_language, pattern=\"^manage_language$\"), # معالج زر اللغة
-                CallbackQueryHandler(cancel, pattern=\"^cancel$\"),
-                CallbackQueryHandler(back_to_main, pattern=\"^back_to_main$\"),
+                CallbackQueryHandler(manage_groups, pattern="^manage_groups$"),
+                CallbackQueryHandler(manage_interval, pattern="^manage_interval$"),
+                CallbackQueryHandler(manage_message_style, pattern="^manage_message_style$"),
+                CallbackQueryHandler(manage_user_attempts, pattern="^manage_user_attempts$"),
+                CallbackQueryHandler(manage_admins, pattern="^manage_admins$"),
+                CallbackQueryHandler(manage_language, pattern="^manage_language$"), # معالج زر اللغة
+                CallbackQueryHandler(cancel, pattern="^cancel$"),
+                CallbackQueryHandler(back_to_main, pattern="^back_to_main$"),
             ],
             # ... (الحالات الأخرى كما هي مع إضافة حالات اللغة)
             MANAGE_GROUPS: [
-                CallbackQueryHandler(add_group, pattern=\"^add_group$\"),
-                CallbackQueryHandler(delete_group, pattern=\"^delete_group$\"),
-                CallbackQueryHandler(edit_group, pattern=\"^edit_group$\"),
-                CallbackQueryHandler(back_to_main, pattern=\"^back_to_main$\"),
-                CallbackQueryHandler(manage_groups, pattern=\"^manage_groups$\"),
+                CallbackQueryHandler(add_group, pattern="^add_group$"),
+                CallbackQueryHandler(delete_group, pattern="^delete_group$"),
+                CallbackQueryHandler(edit_group, pattern="^edit_group$"),
+                CallbackQueryHandler(back_to_main, pattern="^back_to_main$"),
+                CallbackQueryHandler(manage_groups, pattern="^manage_groups$"),
             ],
             ADD_GROUP: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_add_group)],
             ADD_SECRET: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_add_secret)],
             CONFIRM_ADD_GROUP: [
-                CallbackQueryHandler(execute_add_group, pattern=\"^confirm_add_group_yes$\"),
-                CallbackQueryHandler(manage_groups, pattern=\"^manage_groups$\"),
+                CallbackQueryHandler(execute_add_group, pattern="^confirm_add_group_yes$"),
+                CallbackQueryHandler(manage_groups, pattern="^manage_groups$"),
             ],
             DELETE_GROUP: [
-                CallbackQueryHandler(confirm_delete_group, pattern=\"^confirm_del_group_\"),
-                CallbackQueryHandler(manage_groups, pattern=\"^manage_groups$\"),
+                CallbackQueryHandler(confirm_delete_group, pattern="^confirm_del_group_"),
+                CallbackQueryHandler(manage_groups, pattern="^manage_groups$"),
             ],
             CONFIRM_DELETE_GROUP: [
-                 CallbackQueryHandler(execute_delete_group, pattern=\"^execute_del_group_yes$\"),
-                 CallbackQueryHandler(manage_groups, pattern=\"^manage_groups$\"),
+                 CallbackQueryHandler(execute_delete_group, pattern="^execute_del_group_yes$"),
+                 CallbackQueryHandler(manage_groups, pattern="^manage_groups$"),
             ],
             EDIT_GROUP: [
-                CallbackQueryHandler(process_edit_group, pattern=\"^edit_group_\"),
-                CallbackQueryHandler(manage_groups, pattern=\"^manage_groups$\"),
+                CallbackQueryHandler(process_edit_group, pattern="^edit_group_"),
+                CallbackQueryHandler(manage_groups, pattern="^manage_groups$"),
             ],
             EDIT_SECRET: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_edit_secret)],
             MANAGE_INTERVAL: [
-                CallbackQueryHandler(process_manage_interval, pattern=\"^interval_\"),
-                CallbackQueryHandler(set_interval, pattern=\"^set_interval_\"),
-                CallbackQueryHandler(back_to_main, pattern=\"^back_to_main$\"),
-                CallbackQueryHandler(manage_interval, pattern=\"^manage_interval$\"),
+                CallbackQueryHandler(process_manage_interval, pattern="^interval_"),
+                CallbackQueryHandler(set_interval, pattern="^set_interval_"),
+                CallbackQueryHandler(back_to_main, pattern="^back_to_main$"),
+                CallbackQueryHandler(manage_interval, pattern="^manage_interval$"),
             ],
             MANAGE_MESSAGE_STYLE: [
-                CallbackQueryHandler(process_manage_message_style, pattern=\"^style_\"),
-                CallbackQueryHandler(set_message_style, pattern=\"^set_style_\"),
-                CallbackQueryHandler(set_message_style, pattern=\"^set_timezone_\"),
-                CallbackQueryHandler(back_to_main, pattern=\"^back_to_main$\"),
-                CallbackQueryHandler(manage_message_style, pattern=\"^manage_message_style$\"),
+                CallbackQueryHandler(process_manage_message_style, pattern="^style_"),
+                CallbackQueryHandler(set_message_style, pattern="^set_style_"),
+                CallbackQueryHandler(set_message_style, pattern="^set_timezone_"),
+                CallbackQueryHandler(back_to_main, pattern="^back_to_main$"),
+                CallbackQueryHandler(manage_message_style, pattern="^manage_message_style$"),
             ],
             MANAGE_ADMINS: [
-                CallbackQueryHandler(add_admin, pattern=\"^add_admin$\"),
-                CallbackQueryHandler(remove_admin, pattern=\"^remove_admin$\"),
-                CallbackQueryHandler(back_to_main, pattern=\"^back_to_main$\"),
-                CallbackQueryHandler(manage_admins, pattern=\"^manage_admins$\"),
+                CallbackQueryHandler(add_admin, pattern="^add_admin$"),
+                CallbackQueryHandler(remove_admin, pattern="^remove_admin$"),
+                CallbackQueryHandler(back_to_main, pattern="^back_to_main$"),
+                CallbackQueryHandler(manage_admins, pattern="^manage_admins$"),
             ],
             ADD_ADMIN: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_add_admin)],
             CONFIRM_ADD_ADMIN: [
-                CallbackQueryHandler(execute_add_admin, pattern=\"^confirm_add_admin_yes$\"),
-                CallbackQueryHandler(manage_admins, pattern=\"^manage_admins$\"),
+                CallbackQueryHandler(execute_add_admin, pattern="^confirm_add_admin_yes$"),
+                CallbackQueryHandler(manage_admins, pattern="^manage_admins$"),
             ],
             REMOVE_ADMIN: [
-                CallbackQueryHandler(confirm_remove_admin, pattern=\"^confirm_del_admin_\"),
-                CallbackQueryHandler(manage_admins, pattern=\"^manage_admins$\"),
+                CallbackQueryHandler(confirm_remove_admin, pattern="^confirm_del_admin_"),
+                CallbackQueryHandler(manage_admins, pattern="^manage_admins$"),
             ],
             CONFIRM_REMOVE_ADMIN: [
-                CallbackQueryHandler(execute_remove_admin, pattern=\"^execute_del_admin_yes$\"),
-                CallbackQueryHandler(manage_admins, pattern=\"^manage_admins$\"),
+                CallbackQueryHandler(execute_remove_admin, pattern="^execute_del_admin_yes$"),
+                CallbackQueryHandler(manage_admins, pattern="^manage_admins$"),
             ],
             MANAGE_USER_ATTEMPTS: [
-                CallbackQueryHandler(select_group_for_user, pattern=\"^select_group_for_user$\"),
-                CallbackQueryHandler(select_group_for_default_attempts, pattern=\"^select_group_default_attempts$\"),
-                CallbackQueryHandler(back_to_main, pattern=\"^back_to_main$\"),
+                CallbackQueryHandler(select_group_for_user, pattern="^select_group_for_user$"),
+                CallbackQueryHandler(select_group_for_default_attempts, pattern="^select_group_default_attempts$"),
+                CallbackQueryHandler(back_to_main, pattern="^back_to_main$"),
             ],
             SELECT_GROUP_FOR_DEFAULT_ATTEMPTS: [
-                CallbackQueryHandler(request_new_default_attempts, pattern=\"^set_default_attempts_\"),
-                CallbackQueryHandler(manage_user_attempts, pattern=\"^manage_user_attempts$\"),
-                CallbackQueryHandler(select_group_for_default_attempts, pattern=\"^select_group_default_attempts$\"),
+                CallbackQueryHandler(request_new_default_attempts, pattern="^set_default_attempts_"),
+                CallbackQueryHandler(manage_user_attempts, pattern="^manage_user_attempts$"),
+                CallbackQueryHandler(select_group_for_default_attempts, pattern="^select_group_default_attempts$"),
             ],
             SET_DEFAULT_ATTEMPTS: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_set_default_attempts)],
             SELECT_GROUP_FOR_USER: [
-                CallbackQueryHandler(select_user, pattern=\"^select_users_\"),
-                CallbackQueryHandler(manage_user_attempts, pattern=\"^manage_user_attempts$\"),
+                CallbackQueryHandler(select_user, pattern="^select_users_"),
+                CallbackQueryHandler(manage_user_attempts, pattern="^manage_user_attempts$"),
             ],
             SELECT_USER: [
-                CallbackQueryHandler(manage_user, pattern=\"^manage_user_\"),
-                CallbackQueryHandler(select_group_for_user, pattern=\"^select_group_for_user$\"),
+                CallbackQueryHandler(manage_user, pattern="^manage_user_"),
+                CallbackQueryHandler(select_group_for_user, pattern="^select_group_for_user$"),
             ],
             MANAGE_USER: [
-                CallbackQueryHandler(add_attempts, pattern=\"^add_attempts$\"),
-                CallbackQueryHandler(remove_attempts, pattern=\"^remove_attempts$\"),
-                CallbackQueryHandler(toggle_ban, pattern=\"^toggle_ban$\"),
-                CallbackQueryHandler(select_user, pattern=\"^select_users_\"),
-                CallbackQueryHandler(manage_user, pattern=\"^manage_user_\"),
+                CallbackQueryHandler(add_attempts, pattern="^add_attempts$"),
+                CallbackQueryHandler(remove_attempts, pattern="^remove_attempts$"),
+                CallbackQueryHandler(toggle_ban, pattern="^toggle_ban$"),
+                CallbackQueryHandler(select_user, pattern="^select_users_"),
+                CallbackQueryHandler(manage_user, pattern="^manage_user_"),
             ],
             ADD_ATTEMPTS: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_add_attempts)],
             REMOVE_ATTEMPTS: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_remove_attempts)],
             # --- حالات إدارة اللغة ---
             SELECT_LANGUAGE: [
-                CallbackQueryHandler(set_language, pattern=\"^set_lang_\"),
-                CallbackQueryHandler(back_to_main, pattern=\"^back_to_main$\"),
+                CallbackQueryHandler(set_language, pattern="^set_lang_"),
+                CallbackQueryHandler(back_to_main, pattern="^back_to_main$"),
             ],
         },
         fallbacks=[
             CommandHandler("admin", admin_command),
             CommandHandler("start", start),
-            CallbackQueryHandler(cancel, pattern=\"^cancel$\"),
-            CallbackQueryHandler(back_to_main, pattern=\"^back_to_main$\"),
+            CallbackQueryHandler(cancel, pattern="^cancel$"),
+            CallbackQueryHandler(back_to_main, pattern="^back_to_main$"),
             MessageHandler(filters.TEXT & ~filters.COMMAND, lambda update, context: update.message.reply_text(_(update.effective_user.id, "unexpected_input_in_conversation"))),
             CallbackQueryHandler(lambda update, context: update.callback_query.answer(_(update.effective_user.id, "invalid_button_alert"), show_alert=True)),
         ],
@@ -1556,11 +1556,11 @@ def main():
     
     application.add_handler(conv_handler)
     application.add_handler(CommandHandler("start", start))
-    application.add_handler(CallbackQueryHandler(button_callback, pattern=\"^copy_code_\"))
+    application.add_handler(CallbackQueryHandler(button_callback, pattern="^copy_code_"))
     
     logger.info("بدء تشغيل البوت...")
     application.run_polling()
 
-if __name__ == \'__main__\':
+if __name__ == '__main__':
     main()
 
