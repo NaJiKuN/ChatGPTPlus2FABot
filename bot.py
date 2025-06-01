@@ -1136,9 +1136,6 @@ async def send_auth_message(bot, group_id):
     next_time = get_next_time(interval, timezone_name)
     interval_text = format_interval(interval)
     
-    message = f"🔐 رمز التحقق 2FA: `{code}`\n"
-    message += f"⏳ صالح لمدة: {remaining_validity} ثانية\n\n"
-    
     if message_style == 1:
         message += f"⏭️ الرمز التالي في: {next_time}"
     elif message_style == 2:
