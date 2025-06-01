@@ -23,7 +23,7 @@ from telegram.ext import (
 
 # تكوين السجلات
 logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    format=\'%(asctime)s - %(name)s - %(levelname)s - %(message)s\',
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
@@ -64,31 +64,31 @@ stop_flags = {}
 def load_config():
     """تحميل ملف الإعدادات"""
     if os.path.exists(CONFIG_FILE):
-        with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
+        with open(CONFIG_FILE, \'r\', encoding=\'utf-8\') as f:
             return json.load(f)
     else:
-        with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
+        with open(CONFIG_FILE, \'w\', encoding=\'utf-8\') as f:
             json.dump(DEFAULT_CONFIG, f, ensure_ascii=False, indent=4)
         return DEFAULT_CONFIG
 
 def save_config(config):
     """حفظ ملف الإعدادات"""
-    with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
+    with open(CONFIG_FILE, \'w\', encoding=\'utf-8\') as f:
         json.dump(config, f, ensure_ascii=False, indent=4)
 
 def load_users():
     """تحميل بيانات المستخدمين"""
     if os.path.exists(USERS_FILE):
-        with open(USERS_FILE, 'r', encoding='utf-8') as f:
+        with open(USERS_FILE, \'r\', encoding=\'utf-8\') as f:
             return json.load(f)
     else:
-        with open(USERS_FILE, 'w', encoding='utf-8') as f:
+        with open(USERS_FILE, \'w\', encoding=\'utf-8\') as f:
             json.dump(DEFAULT_USERS, f, ensure_ascii=False, indent=4)
         return DEFAULT_USERS
 
 def save_users(users):
     """حفظ بيانات المستخدمين"""
-    with open(USERS_FILE, 'w', encoding='utf-8') as f:
+    with open(USERS_FILE, \'w\', encoding=\'utf-8\') as f:
         json.dump(users, f, ensure_ascii=False, indent=4)
 
 def is_admin(user_id):
@@ -101,10 +101,10 @@ def get_time_format(timezone_name="UTC"):
     try:
         timezone = tz.gettz(timezone_name)
         if timezone is None:
-            logger.warning(f"Timezone '{timezone_name}' not found, defaulting to UTC.")
+            logger.warning(f"Timezone \'{timezone_name}\' not found, defaulting to UTC.")
             timezone = tz.gettz("UTC")
     except Exception as e:
-        logger.error(f"Error getting timezone '{timezone_name}': {e}. Defaulting to UTC.")
+        logger.error(f"Error getting timezone \'{timezone_name}\': {e}. Defaulting to UTC.")
         timezone = tz.gettz("UTC")
     now = datetime.datetime.now(timezone)
     return now.strftime("%I:%M:%S %p")
@@ -114,10 +114,10 @@ def get_next_time(interval_seconds, timezone_name="UTC"):
     try:
         timezone = tz.gettz(timezone_name)
         if timezone is None:
-            logger.warning(f"Timezone '{timezone_name}' not found, defaulting to UTC.")
+            logger.warning(f"Timezone \'{timezone_name}\' not found, defaulting to UTC.")
             timezone = tz.gettz("UTC")
     except Exception as e:
-        logger.error(f"Error getting timezone '{timezone_name}': {e}. Defaulting to UTC.")
+        logger.error(f"Error getting timezone \'{timezone_name}\': {e}. Defaulting to UTC.")
         timezone = tz.gettz("UTC")
     now = datetime.datetime.now(timezone)
     next_time = now + datetime.timedelta(seconds=interval_seconds)
@@ -538,9 +538,10 @@ async def process_manage_message_style(update: Update, context: ContextTypes.DEF
     group_id = query.data.replace("style_", "")
     context.user_data["style_group_id"] = group_id
     
-    style1 = "🔐 2FA Verification Code\n\nNext code at: HH:MM:SS AM/PM"
-    style2 = "🔐 2FA Verification Code\n\nNext code in: X minutes\n\nNext code at: HH:MM:SS AM/PM"
-    style3 = "🔐 2FA Verification Code\nNext code in: X minutes\nCorrect Time: HH:MM:SS AM/PM\nNext Code at: HH:MM:SS AM/PM"
+    # تم تحديث الأنماط لتعكس عدم وجود الكود في الرسالة الدورية
+    style1 = "🔐 رمز مصادقة ثنائية جديد متاح.\nاضغط على الزر أدناه لنسخ الرمز.\n\n⏭️ الرمز التالي في: HH:MM:SS AM/PM"
+    style2 = "🔐 رمز مصادقة ثنائية جديد متاح.\nاضغط على الزر أدناه لنسخ الرمز.\n\n⏱️ الرمز التالي خلال: X minutes\n⏭️ الرمز التالي في: HH:MM:SS AM/PM"
+    style3 = "🔐 رمز مصادقة ثنائية جديد متاح.\nاضغط على الزر أدناه لنسخ الرمز.\n\n⏱️ الرمز التالي خلال: X minutes\n⏰ الوقت الحالي: HH:MM:SS AM/PM\n⏭️ الرمز التالي في: HH:MM:SS AM/PM"
     
     keyboard = [
         [InlineKeyboardButton("1️⃣ النمط الأول", callback_data="set_style_1")],
@@ -755,12 +756,6 @@ async def toggle_ban(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.edit_message_text(message, reply_markup=reply_markup)
     
-    # العودة إلى شاشة إدارة المستخدم لعرض الحالة المحدثة
-    # استدعاء manage_user مرة أخرى لتحديث الواجهة
-    # نحتاج إلى تمرير query معدل أو إعادة بناء السياق
-    # الطريقة الأسهل هي إعادة توجيه المستخدم
-    # لكن بما أننا في نفس الحالة، يمكننا تحديث الرسالة مباشرة
-    # ونترك المستخدم يضغط على زر العودة إذا أراد
     return MANAGE_USER # البقاء في نفس الحالة لتحديث الواجهة
 
 async def add_attempts(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1083,8 +1078,6 @@ def periodic_task_thread(bot, group_id, interval, stop_flag):
             # يمكنك إضافة منطق لإعادة المحاولة أو إيقاف المهمة إذا تكررت الأخطاء
             
         # انتظار الفاصل الزمني أو حتى يتم تعيين علم الإيقاف
-        # استخدام time.sleep() في خيط منفصل مقبول
-        # لكن تأكد من أن الانتظار لا يمنع الإيقاف السريع
         wait_interval = 1 # تحقق كل ثانية
         for _ in range(interval):
             if stop_flag.is_set():
@@ -1095,7 +1088,7 @@ def periodic_task_thread(bot, group_id, interval, stop_flag):
     logger.info(f"تم إنهاء خيط المهمة الدورية للمجموعة {group_id}")
 
 async def send_auth_message(bot, group_id):
-    """إرسال رسالة المصادقة إلى المجموعة"""
+    """إرسال رسالة المصادقة إلى المجموعة (بدون الكود)"""
     config = load_config()
     
     if group_id not in config["groups"]:
@@ -1110,31 +1103,44 @@ async def send_auth_message(bot, group_id):
     
     if not totp_secret:
         logger.error(f"TOTP_SECRET غير موجود للمجموعة {group_id}")
+        # لا يمكن توليد الكود لاحقاً، ربما يجب إيقاف المهمة أو إرسال خطأ؟
+        # حالياً، سنرسل رسالة خطأ للمجموعة ونمنع إرسال الزر
+        try:
+            await bot.send_message(
+                chat_id=int(group_id),
+                text=f"⚠️ خطأ: TOTP_SECRET غير معرف للمجموعة {group_id}. لا يمكن توليد رموز المصادقة."
+            )
+        except Exception as send_error:
+            logger.error(f"خطأ في إرسال رسالة خطأ TOTP إلى المجموعة {group_id}: {send_error}")
         return
         
     if interval <= 0:
         # لا ترسل رسائل إذا كان التكرار متوقفاً (interval=0 أو سالب)
         return
         
-    try:
-        totp = pyotp.TOTP(totp_secret)
-        code = totp.now()
-        remaining_validity = get_remaining_validity(totp)
-    except Exception as e:
-        logger.error(f"خطأ في توليد رمز TOTP للمجموعة {group_id}: {e}")
-        # إرسال رسالة خطأ للمجموعة؟ أو فقط تسجيل الخطأ؟
-        try:
-            await bot.send_message(
-                chat_id=int(group_id),
-                text=f"⚠️ خطأ في توليد رمز المصادقة للمجموعة {group_id}. يرجى مراجعة TOTP_SECRET."
-            )
-        except Exception as send_error:
-            logger.error(f"خطأ في إرسال رسالة خطأ TOTP إلى المجموعة {group_id}: {send_error}")
-        return
+    # --- لا يتم توليد الكود هنا --- 
+    # try:
+    #     totp = pyotp.TOTP(totp_secret)
+    #     code = totp.now()
+    #     remaining_validity = get_remaining_validity(totp)
+    # except Exception as e:
+    #     logger.error(f"خطأ في توليد رمز TOTP للمجموعة {group_id}: {e}")
+    #     try:
+    #         await bot.send_message(
+    #             chat_id=int(group_id),
+    #             text=f"⚠️ خطأ في توليد رمز المصادقة للمجموعة {group_id}. يرجى مراجعة TOTP_SECRET."
+    #         )
+    #     except Exception as send_error:
+    #         logger.error(f"خطأ في إرسال رسالة خطأ TOTP إلى المجموعة {group_id}: {send_error}")
+    #     return
 
     current_time = get_time_format(timezone_name)
     next_time = get_next_time(interval, timezone_name)
     interval_text = format_interval(interval)
+    
+    # --- رسالة المجموعة المعدلة --- 
+    message = "🔐 رمز مصادقة ثنائية جديد متاح.\n"
+    message += "اضغط على الزر أدناه لنسخ الرمز واستلامه في رسالة خاصة.\n\n"
     
     if message_style == 1:
         message += f"⏭️ الرمز التالي في: {next_time}"
@@ -1154,11 +1160,11 @@ async def send_auth_message(bot, group_id):
             chat_id=int(group_id),
             text=message,
             reply_markup=reply_markup,
-            parse_mode="Markdown"
+            parse_mode="Markdown" # الحفاظ على الماركداون للتنسيق المحتمل
         )
-        logger.info(f"تم إرسال رسالة المصادقة إلى المجموعة {group_id}")
+        logger.info(f"تم إرسال إشعار رمز المصادقة إلى المجموعة {group_id}") # تحديث رسالة السجل
     except Exception as e:
-        logger.error(f"خطأ في إرسال رسالة المصادقة إلى المجموعة {group_id}: {str(e)}")
+        logger.error(f"خطأ في إرسال إشعار رمز المصادقة إلى المجموعة {group_id}: {str(e)}")
         # قد يكون البوت محظوراً أو ليس لديه صلاحيات في المجموعة
 
 # وظائف معالجة الأزرار
@@ -1173,7 +1179,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # الأزرار الأخرى يتم التعامل معها داخل ConversationHandler
 
 async def handle_copy_code(update: Update, context: ContextTypes.DEFAULT_TYPE, group_id):
-    """معالجة زر Copy Code"""
+    """معالجة زر Copy Code (يرسل الرمز في رسالة خاصة)"""
     query = update.callback_query
     user_id = str(query.from_user.id)
     
@@ -1181,7 +1187,6 @@ async def handle_copy_code(update: Update, context: ContextTypes.DEFAULT_TYPE, g
     users = load_users()
     
     if group_id not in config["groups"]:
-        # قد تكون الرسالة قديمة والمجموعة حذفت
         await query.edit_message_reply_markup(reply_markup=None) # إزالة الزر
         await query.answer("خطأ: المجموعة لم تعد موجودة. 🤷‍♂️", show_alert=True)
         return
@@ -1197,10 +1202,8 @@ async def handle_copy_code(update: Update, context: ContextTypes.DEFAULT_TYPE, g
     if "attempts" not in users[user_id]:
         users[user_id]["attempts"] = {}
     if group_id not in users[user_id]["attempts"]:
-        # تعيين المحاولات الافتراضية (5)
         users[user_id]["attempts"][group_id] = {"remaining": 5, "reset_date": today}
     
-    # إعادة تعيين المحاولات إذا كان اليوم مختلفاً
     if users[user_id]["attempts"][group_id]["reset_date"] != today:
         users[user_id]["attempts"][group_id] = {"remaining": 5, "reset_date": today}
     
@@ -1209,7 +1212,6 @@ async def handle_copy_code(update: Update, context: ContextTypes.DEFAULT_TYPE, g
             "⚠️ لقد استنفدت جميع محاولاتك لهذا اليوم! يرجى الانتظار حتى منتصف الليل لإعادة تعيين المحاولات.",
             show_alert=True
         )
-        # إشعار المستخدم برسالة خاصة بانتهاء المحاولات
         try:
             await context.bot.send_message(
                 chat_id=query.from_user.id,
@@ -1222,7 +1224,14 @@ async def handle_copy_code(update: Update, context: ContextTypes.DEFAULT_TYPE, g
     users[user_id]["attempts"][group_id]["remaining"] -= 1
     save_users(users)
     
-    totp_secret = config["groups"][group_id]["totp_secret"]
+    totp_secret = config["groups"][group_id].get("totp_secret")
+    if not totp_secret:
+        logger.error(f"TOTP_SECRET غير موجود للمجموعة {group_id} عند محاولة النسخ")
+        await query.answer("خطأ: لا يمكن توليد الرمز لهذه المجموعة. 🤯", show_alert=True)
+        users[user_id]["attempts"][group_id]["remaining"] += 1 # استعادة المحاولة
+        save_users(users)
+        return
+        
     try:
         totp = pyotp.TOTP(totp_secret)
         code = totp.now()
@@ -1230,16 +1239,16 @@ async def handle_copy_code(update: Update, context: ContextTypes.DEFAULT_TYPE, g
     except Exception as e:
         logger.error(f"خطأ في توليد رمز TOTP عند النسخ للمجموعة {group_id}: {e}")
         await query.answer("حدث خطأ أثناء توليد الرمز. 🤯", show_alert=True)
-        # إعادة المحاولة للمستخدم؟
         users[user_id]["attempts"][group_id]["remaining"] += 1 # استعادة المحاولة
         save_users(users)
         return
         
     remaining_attempts = users[user_id]["attempts"][group_id]["remaining"]
     
+    # --- الرسالة الخاصة التي تحتوي على الكود --- 
     message = (
-        f"🔐 رمز المصادقة الثنائية: `{code}`\n\n"
-        f"⏱ الرمز صالح لمدة {remaining_validity} ثانية فقط\n"
+        f"🔐 رمز المصادقة الثنائية للمجموعة `{group_id}`:\n\n`{code}`\n\n"
+        f"⏱ الرمز صالح لمدة {remaining_validity} ثانية فقط.\n"
         f"🔄 المحاولات المتبقية اليوم: {remaining_attempts}"
     )
     
@@ -1249,7 +1258,6 @@ async def handle_copy_code(update: Update, context: ContextTypes.DEFAULT_TYPE, g
             text=message,
             parse_mode="Markdown"
         )
-        # إشعار المستخدم في الـ alert بوصول الرسالة الخاصة
         await query.answer("✅ تم إرسال رمز المصادقة إلى رسائلك الخاصة!", show_alert=True)
     except Exception as e:
         logger.error(f"خطأ في إرسال رمز المصادقة إلى المستخدم {user_id}: {str(e)}")
@@ -1257,7 +1265,6 @@ async def handle_copy_code(update: Update, context: ContextTypes.DEFAULT_TYPE, g
             "لم نتمكن من إرسال رسالة خاصة. ⚠️ يرجى التأكد من أنك بدأت محادثة مع البوت ولم تقم بحظره.",
             show_alert=True
         )
-        # إعادة المحاولة للمستخدم؟
         users[user_id]["attempts"][group_id]["remaining"] += 1 # استعادة المحاولة
         save_users(users)
 
@@ -1271,10 +1278,8 @@ async def post_init(application: Application):
 
 def main():
     """النقطة الرئيسية لتشغيل البوت"""
-    # إنشاء تطبيق البوت
     application = Application.builder().token(TOKEN).post_init(post_init).build()
     
-    # إنشاء محادثة لوحة الإدارة
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler("admin", admin_command)],
         states={
@@ -1285,7 +1290,7 @@ def main():
                 CallbackQueryHandler(manage_user_attempts, pattern="^manage_user_attempts$"),
                 CallbackQueryHandler(manage_admins, pattern="^manage_admins$"),
                 CallbackQueryHandler(cancel, pattern="^cancel$"),
-                CallbackQueryHandler(back_to_main, pattern="^back_to_main$") # التأكد من وجوده هنا
+                CallbackQueryHandler(back_to_main, pattern="^back_to_main$")
             ],
             MANAGE_GROUPS: [
                 CallbackQueryHandler(add_group, pattern="^add_group$"),
@@ -1295,16 +1300,16 @@ def main():
             ],
             ADD_GROUP: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, process_add_group),
-                CallbackQueryHandler(cancel, pattern="^cancel$") # السماح بالإلغاء
+                CallbackQueryHandler(cancel, pattern="^cancel$")
             ],
             DELETE_GROUP: [
                 CallbackQueryHandler(process_delete_group, pattern="^del_group_"),
-                CallbackQueryHandler(manage_groups, pattern="^manage_groups$"), # زر العودة في هذه القائمة
-                CallbackQueryHandler(back_to_main, pattern="^back_to_main$") # زر العودة للقائمة الرئيسية
+                CallbackQueryHandler(manage_groups, pattern="^manage_groups$"),
+                CallbackQueryHandler(back_to_main, pattern="^back_to_main$")
             ],
             EDIT_GROUP: [
                 CallbackQueryHandler(process_edit_group, pattern="^edit_group_"),
-                CallbackQueryHandler(manage_groups, pattern="^manage_groups$"), # زر العودة
+                CallbackQueryHandler(manage_groups, pattern="^manage_groups$"),
                 CallbackQueryHandler(back_to_main, pattern="^back_to_main$")
             ],
             ADD_SECRET: [
@@ -1320,14 +1325,14 @@ def main():
                 CallbackQueryHandler(set_interval, pattern="^set_interval_"),
                 CallbackQueryHandler(set_interval, pattern="^stop_interval$"),
                 CallbackQueryHandler(set_interval, pattern="^start_interval$"),
-                CallbackQueryHandler(manage_interval, pattern="^manage_interval$"), # زر العودة في هذه القائمة
+                CallbackQueryHandler(manage_interval, pattern="^manage_interval$"),
                 CallbackQueryHandler(back_to_main, pattern="^back_to_main$")
             ],
             MANAGE_MESSAGE_STYLE: [
                 CallbackQueryHandler(process_manage_message_style, pattern="^style_"),
                 CallbackQueryHandler(set_message_style, pattern="^set_style_"),
                 CallbackQueryHandler(set_message_style, pattern="^set_timezone_"),
-                CallbackQueryHandler(manage_message_style, pattern="^manage_message_style$"), # زر العودة
+                CallbackQueryHandler(manage_message_style, pattern="^manage_message_style$"),
                 CallbackQueryHandler(back_to_main, pattern="^back_to_main$")
             ],
             MANAGE_USER_ATTEMPTS: [
@@ -1336,19 +1341,18 @@ def main():
             ],
             SELECT_GROUP_FOR_USER: [
                 CallbackQueryHandler(select_user, pattern="^select_users_"),
-                CallbackQueryHandler(manage_user_attempts, pattern="^manage_user_attempts$"), # زر العودة
+                CallbackQueryHandler(manage_user_attempts, pattern="^manage_user_attempts$"),
                 CallbackQueryHandler(back_to_main, pattern="^back_to_main$")
             ],
             SELECT_USER: [
                 CallbackQueryHandler(manage_user, pattern="^manage_user_"),
-                CallbackQueryHandler(select_group_for_user, pattern="^select_group_for_user$"), # زر العودة
+                CallbackQueryHandler(select_group_for_user, pattern="^select_group_for_user$"),
                 CallbackQueryHandler(back_to_main, pattern="^back_to_main$")
             ],
             MANAGE_USER: [
                 CallbackQueryHandler(add_attempts, pattern="^add_attempts$"),
                 CallbackQueryHandler(remove_attempts, pattern="^remove_attempts$"),
                 CallbackQueryHandler(toggle_ban, pattern="^toggle_ban$"),
-                # زر العودة هنا هو select_users_{group_id} الذي يعيد لقائمة اختيار المستخدم
                 CallbackQueryHandler(select_user, pattern="^select_users_"), 
                 CallbackQueryHandler(back_to_main, pattern="^back_to_main$")
             ],
@@ -1363,7 +1367,7 @@ def main():
             MANAGE_ADMINS: [
                 CallbackQueryHandler(add_admin, pattern="^add_admin$"),
                 CallbackQueryHandler(remove_admin, pattern="^remove_admin$"),
-                CallbackQueryHandler(manage_admins, pattern="^manage_admins$"), # زر العودة
+                CallbackQueryHandler(manage_admins, pattern="^manage_admins$"),
                 CallbackQueryHandler(back_to_main, pattern="^back_to_main$")
             ],
             ADD_ADMIN: [
@@ -1372,25 +1376,21 @@ def main():
             ],
             REMOVE_ADMIN: [
                 CallbackQueryHandler(process_remove_admin, pattern="^del_admin_"),
-                CallbackQueryHandler(manage_admins, pattern="^manage_admins$"), # زر العودة
+                CallbackQueryHandler(manage_admins, pattern="^manage_admins$"),
                 CallbackQueryHandler(back_to_main, pattern="^back_to_main$")
             ]
         },
         fallbacks=[
-            CommandHandler("cancel", cancel), # أمر لإلغاء المحادثة
-            CallbackQueryHandler(cancel, pattern="^cancel$") # زر الإلغاء
-            # يمكنك إضافة معالجات أخرى هنا للتعامل مع مدخلات غير متوقعة
+            CommandHandler("cancel", cancel),
+            CallbackQueryHandler(cancel, pattern="^cancel$")
         ],
-        per_message=False # الحفاظ على الحالة عبر الرسائل
+        per_message=False
     )
     
-    # إضافة المعالجات
     application.add_handler(CommandHandler("start", start))
     application.add_handler(conv_handler)
-    # معالج زر النسخ يجب أن يكون خارج المحادثة لأنه يظهر في رسائل المجموعة
     application.add_handler(CallbackQueryHandler(button_callback, pattern="^copy_code_"))
     
-    # تشغيل البوت
     logger.info("بدء تشغيل البوت...")
     application.run_polling()
 
