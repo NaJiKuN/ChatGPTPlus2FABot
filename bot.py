@@ -135,25 +135,34 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"إذا كنت مسؤولاً، يمكنك استخدام الأمر /admin للوصول إلى لوحة التحكم."
     )
 
+# وظائف البوت الأساسية
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """التعامل مع أمر /start"""
+    user = update.effective_user
+    await update.message.reply_text(
+        f"مرحباً {user.first_name}! 👋 هذا بوت المصادقة الثنائية 2FA.\n"
+        f"إذا كنت مسؤولاً، يمكنك استخدام الأمر /admin للوصول إلى لوحة التحكم."
+    )
+
 async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """التعامل مع أمر /admin"""
     user_id = update.effective_user.id
     
     if not is_admin(user_id):
-        await update.message.reply_text("عذراً، هذا الأمر متاح للمسؤولين فقط.")
+        await update.message.reply_text("عذراً، هذا الأمر متاح للمسؤولين فقط. 🚫")
         return ConversationHandler.END
     
     keyboard = [
-        [InlineKeyboardButton("إدارة المجموعات/TOTP_SECRET", callback_data="manage_groups")],
-        [InlineKeyboardButton("إدارة فترة التكرار", callback_data="manage_interval")],
-        [InlineKeyboardButton("إدارة شكل/توقيت الرسالة", callback_data="manage_message_style")],
-        [InlineKeyboardButton("إدارة محاولات المستخدمين", callback_data="manage_user_attempts")],
-        [InlineKeyboardButton("إدارة المسؤولين", callback_data="manage_admins")],
-        [InlineKeyboardButton("إلغاء", callback_data="cancel")]
+        [InlineKeyboardButton("⚙️ إدارة المجموعات/TOTP_SECRET", callback_data="manage_groups")],
+        [InlineKeyboardButton("⏱️ إدارة فترة التكرار", callback_data="manage_interval")],
+        [InlineKeyboardButton("🎨 إدارة شكل/توقيت الرسالة", callback_data="manage_message_style")],
+        [InlineKeyboardButton("🔢 إدارة محاولات المستخدمين", callback_data="manage_user_attempts")],
+        [InlineKeyboardButton("👮 إدارة المسؤولين", callback_data="manage_admins")],
+        [InlineKeyboardButton("❌ إلغاء", callback_data="cancel")]
     ]
     
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text("مرحباً بك في لوحة الإدارة. يرجى اختيار إحدى الخيارات:", reply_markup=reply_markup)
+    await update.message.reply_text("مرحباً بك في لوحة الإدارة. يرجى اختيار إحدى الخيارات: 👇", reply_markup=reply_markup)
     
     return MAIN_MENU
 
@@ -164,14 +173,14 @@ async def manage_groups(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     
     keyboard = [
-        [InlineKeyboardButton("إضافة مجموعة", callback_data="add_group")],
-        [InlineKeyboardButton("حذف مجموعة", callback_data="delete_group")],
-        [InlineKeyboardButton("تعديل مجموعة", callback_data="edit_group")],
-        [InlineKeyboardButton("العودة", callback_data="back_to_main")]
+        [InlineKeyboardButton("➕ إضافة مجموعة", callback_data="add_group")],
+        [InlineKeyboardButton("🗑️ حذف مجموعة", callback_data="delete_group")],
+        [InlineKeyboardButton("✏️ تعديل مجموعة", callback_data="edit_group")],
+        [InlineKeyboardButton("🔙 العودة", callback_data="back_to_main")]
     ]
     
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await query.edit_message_text("يرجى اختيار إحدى العمليات لإدارة المجموعات:", reply_markup=reply_markup)
+    await query.edit_message_text("يرجى اختيار إحدى العمليات لإدارة المجموعات: 👇", reply_markup=reply_markup)
     
     return MANAGE_GROUPS
 
@@ -181,7 +190,7 @@ async def add_group(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     
     await query.edit_message_text(
-        "يرجى إدخال معرف المجموعة (مثال: -100XXXXXXXXXX):"
+        "يرجى إدخال معرف المجموعة (مثال: -100XXXXXXXXXX): 🆔"
     )
     
     return ADD_GROUP
@@ -190,20 +199,18 @@ async def process_add_group(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """معالجة إضافة المجموعة"""
     group_id = update.message.text.strip()
     
-    # التحقق من صحة معرف المجموعة
     if not group_id.startswith("-100") or not group_id[4:].isdigit():
         await update.message.reply_text(
-            "معرف المجموعة غير صالح. يجب أن يبدأ بـ -100 متبوعاً بأرقام.\n"
-            "يرجى إدخال معرف المجموعة مرة أخرى:"
+            "معرف المجموعة غير صالح. ❌ يجب أن يبدأ بـ -100 متبوعاً بأرقام.\n"
+            "يرجى إدخال معرف المجموعة مرة أخرى: 🆔"
         )
         return ADD_GROUP
     
-    # حفظ معرف المجموعة في سياق المحادثة
     context.user_data["group_id"] = group_id
     
     await update.message.reply_text(
-        "تم حفظ معرف المجموعة بنجاح.\n"
-        "الآن يرجى إدخال TOTP_SECRET الخاص بالمصادقة الثنائية:"
+        "تم حفظ معرف المجموعة بنجاح. ✅\n"
+        "الآن يرجى إدخال TOTP_SECRET الخاص بالمصادقة الثنائية: 🔑"
     )
     
     return ADD_SECRET
@@ -213,38 +220,35 @@ async def process_add_secret(update: Update, context: ContextTypes.DEFAULT_TYPE)
     totp_secret = update.message.text.strip()
     group_id = context.user_data.get("group_id")
     
-    # التحقق من صحة TOTP_SECRET
     try:
-        # محاولة إنشاء كائن TOTP للتحقق من صحة السر
         totp = pyotp.TOTP(totp_secret)
-        totp.now()  # هذا سيرفع استثناءً إذا كان السر غير صالح
+        totp.now()
     except Exception as e:
         await update.message.reply_text(
-            f"TOTP_SECRET غير صالح: {str(e)}\n"
-            "يرجى إدخال TOTP_SECRET صالح:"
+            f"TOTP_SECRET غير صالح: ❌ {str(e)}\n"
+            "يرجى إدخال TOTP_SECRET صالح: 🔑"
         )
         return ADD_SECRET
     
-    # إضافة المجموعة والسر إلى الإعدادات
     config = load_config()
     config["groups"][group_id] = {
         "totp_secret": totp_secret,
-        "interval": 600,  # 10 دقائق افتراضياً
-        "message_style": 1  # النمط الافتراضي
+        "interval": 600,
+        "message_style": 1,
+        "timezone": "UTC" # إضافة المنطقة الزمنية الافتراضية
     }
     save_config(config)
     
-    # إنشاء مهمة دورية للمجموعة
-    await start_periodic_task(context, group_id)
+    await start_periodic_task(context.application, group_id) # تمرير application بدلاً من context
     
     keyboard = [
-        [InlineKeyboardButton("العودة إلى إدارة المجموعات", callback_data="manage_groups")],
-        [InlineKeyboardButton("العودة إلى القائمة الرئيسية", callback_data="back_to_main")]
+        [InlineKeyboardButton("🔙 العودة إلى إدارة المجموعات", callback_data="manage_groups")],
+        [InlineKeyboardButton("🏠 العودة إلى القائمة الرئيسية", callback_data="back_to_main")]
     ]
     
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text(
-        f"تم إضافة المجموعة {group_id} مع TOTP_SECRET بنجاح!",
+        f"تم إضافة المجموعة {group_id} مع TOTP_SECRET بنجاح! 🎉",
         reply_markup=reply_markup
     )
     
@@ -259,19 +263,19 @@ async def delete_group(update: Update, context: ContextTypes.DEFAULT_TYPE):
     groups = config.get("groups", {})
     
     if not groups:
-        keyboard = [[InlineKeyboardButton("العودة", callback_data="manage_groups")]]
+        keyboard = [[InlineKeyboardButton("🔙 العودة", callback_data="manage_groups")]]
         reply_markup = InlineKeyboardMarkup(keyboard)
-        await query.edit_message_text("لا توجد مجموعات مضافة حالياً.", reply_markup=reply_markup)
+        await query.edit_message_text("لا توجد مجموعات مضافة حالياً. 🤷‍♂️", reply_markup=reply_markup)
         return MANAGE_GROUPS
     
     keyboard = []
     for group_id in groups:
-        keyboard.append([InlineKeyboardButton(f"المجموعة: {group_id}", callback_data=f"del_group_{group_id}")])
+        keyboard.append([InlineKeyboardButton(f"👥 المجموعة: {group_id}", callback_data=f"del_group_{group_id}")])
     
-    keyboard.append([InlineKeyboardButton("العودة", callback_data="manage_groups")])
+    keyboard.append([InlineKeyboardButton("🔙 العودة", callback_data="manage_groups")])
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    await query.edit_message_text("اختر المجموعة التي تريد حذفها:", reply_markup=reply_markup)
+    await query.edit_message_text("اختر المجموعة التي تريد حذفها: 👇", reply_markup=reply_markup)
     
     return DELETE_GROUP
 
@@ -280,25 +284,22 @@ async def process_delete_group(update: Update, context: ContextTypes.DEFAULT_TYP
     query = update.callback_query
     await query.answer()
     
-    # استخراج معرف المجموعة من بيانات الاستدعاء
     group_id = query.data.replace("del_group_", "")
     
-    # إيقاف المهمة الدورية للمجموعة إذا كانت موجودة
-    await stop_periodic_task(context, group_id)
+    await stop_periodic_task(context.application, group_id) # تمرير application بدلاً من context
     
-    # حذف المجموعة من الإعدادات
     config = load_config()
     if group_id in config["groups"]:
         del config["groups"][group_id]
         save_config(config)
     
     keyboard = [
-        [InlineKeyboardButton("العودة إلى إدارة المجموعات", callback_data="manage_groups")],
-        [InlineKeyboardButton("العودة إلى القائمة الرئيسية", callback_data="back_to_main")]
+        [InlineKeyboardButton("🔙 العودة إلى إدارة المجموعات", callback_data="manage_groups")],
+        [InlineKeyboardButton("🏠 العودة إلى القائمة الرئيسية", callback_data="back_to_main")]
     ]
     
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await query.edit_message_text(f"تم حذف المجموعة {group_id} بنجاح!", reply_markup=reply_markup)
+    await query.edit_message_text(f"تم حذف المجموعة {group_id} بنجاح! ✅", reply_markup=reply_markup)
     
     return MAIN_MENU
 
@@ -311,19 +312,19 @@ async def edit_group(update: Update, context: ContextTypes.DEFAULT_TYPE):
     groups = config.get("groups", {})
     
     if not groups:
-        keyboard = [[InlineKeyboardButton("العودة", callback_data="manage_groups")]]
+        keyboard = [[InlineKeyboardButton("🔙 العودة", callback_data="manage_groups")]]
         reply_markup = InlineKeyboardMarkup(keyboard)
-        await query.edit_message_text("لا توجد مجموعات مضافة حالياً.", reply_markup=reply_markup)
+        await query.edit_message_text("لا توجد مجموعات مضافة حالياً. 🤷‍♂️", reply_markup=reply_markup)
         return MANAGE_GROUPS
     
     keyboard = []
     for group_id in groups:
-        keyboard.append([InlineKeyboardButton(f"المجموعة: {group_id}", callback_data=f"edit_group_{group_id}")])
+        keyboard.append([InlineKeyboardButton(f"👥 المجموعة: {group_id}", callback_data=f"edit_group_{group_id}")])
     
-    keyboard.append([InlineKeyboardButton("العودة", callback_data="manage_groups")])
+    keyboard.append([InlineKeyboardButton("🔙 العودة", callback_data="manage_groups")])
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    await query.edit_message_text("اختر المجموعة التي تريد تعديلها:", reply_markup=reply_markup)
+    await query.edit_message_text("اختر المجموعة التي تريد تعديلها: 👇", reply_markup=reply_markup)
     
     return EDIT_GROUP
 
@@ -332,12 +333,11 @@ async def process_edit_group(update: Update, context: ContextTypes.DEFAULT_TYPE)
     query = update.callback_query
     await query.answer()
     
-    # استخراج معرف المجموعة من بيانات الاستدعاء
     group_id = query.data.replace("edit_group_", "")
     context.user_data["edit_group_id"] = group_id
     
     await query.edit_message_text(
-        f"يرجى إدخال TOTP_SECRET الجديد للمجموعة {group_id}:"
+        f"يرجى إدخال TOTP_SECRET الجديد للمجموعة {group_id}: 🔑"
     )
     
     return EDIT_SECRET
@@ -347,32 +347,29 @@ async def process_edit_secret(update: Update, context: ContextTypes.DEFAULT_TYPE
     totp_secret = update.message.text.strip()
     group_id = context.user_data.get("edit_group_id")
     
-    # التحقق من صحة TOTP_SECRET
     try:
-        # محاولة إنشاء كائن TOTP للتحقق من صحة السر
         totp = pyotp.TOTP(totp_secret)
-        totp.now()  # هذا سيرفع استثناءً إذا كان السر غير صالح
+        totp.now()
     except Exception as e:
         await update.message.reply_text(
-            f"TOTP_SECRET غير صالح: {str(e)}\n"
-            "يرجى إدخال TOTP_SECRET صالح:"
+            f"TOTP_SECRET غير صالح: ❌ {str(e)}\n"
+            "يرجى إدخال TOTP_SECRET صالح: 🔑"
         )
         return EDIT_SECRET
     
-    # تحديث TOTP_SECRET في الإعدادات
     config = load_config()
     if group_id in config["groups"]:
         config["groups"][group_id]["totp_secret"] = totp_secret
         save_config(config)
     
     keyboard = [
-        [InlineKeyboardButton("العودة إلى إدارة المجموعات", callback_data="manage_groups")],
-        [InlineKeyboardButton("العودة إلى القائمة الرئيسية", callback_data="back_to_main")]
+        [InlineKeyboardButton("🔙 العودة إلى إدارة المجموعات", callback_data="manage_groups")],
+        [InlineKeyboardButton("🏠 العودة إلى القائمة الرئيسية", callback_data="back_to_main")]
     ]
     
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text(
-        f"تم تحديث TOTP_SECRET للمجموعة {group_id} بنجاح!",
+        f"تم تحديث TOTP_SECRET للمجموعة {group_id} بنجاح! ✅",
         reply_markup=reply_markup
     )
     
@@ -388,24 +385,60 @@ async def manage_interval(update: Update, context: ContextTypes.DEFAULT_TYPE):
     groups = config.get("groups", {})
     
     if not groups:
-        keyboard = [[InlineKeyboardButton("العودة", callback_data="back_to_main")]]
+        keyboard = [[InlineKeyboardButton("🔙 العودة", callback_data="back_to_main")]]
         reply_markup = InlineKeyboardMarkup(keyboard)
-        await query.edit_message_text("لا توجد مجموعات مضافة حالياً.", reply_markup=reply_markup)
+        await query.edit_message_text("لا توجد مجموعات مضافة حالياً. 🤷‍♂️", reply_markup=reply_markup)
         return MAIN_MENU
     
     keyboard = []
     for group_id in groups:
         interval = config["groups"][group_id].get("interval", 600)
         interval_text = format_interval(interval)
-        keyboard.append([InlineKeyboardButton(f"المجموعة: {group_id} ({interval_text})", callback_data=f"interval_{group_id}")])
+        keyboard.append([InlineKeyboardButton(f"👥 المجموعة: {group_id} ({interval_text})", callback_data=f"interval_{group_id}")])
     
-    keyboard.append([InlineKeyboardButton("العودة", callback_data="back_to_main")])
+    keyboard.append([InlineKeyboardButton("🔙 العودة", callback_data="back_to_main")])
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    await query.edit_message_text("اختر المجموعة لتعديل فترة التكرار:", reply_markup=reply_markup)
+    await query.edit_message_text("اختر المجموعة لتعديل فترة التكرار: 👇", reply_markup=reply_markup)
     
     return MANAGE_INTERVAL
 
+async def process_manage_interval(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالجة إدارة فترة التكرار"""
+    query = update.callback_query
+    await query.answer()
+    
+    group_id = query.data.replace("interval_", "")
+    context.user_data["interval_group_id"] = group_id
+    
+    keyboard = [
+        [InlineKeyboardButton("⏳ 1 دقيقة", callback_data="set_interval_60")],
+        [InlineKeyboardButton("⏳ 5 دقائق", callback_data="set_interval_300")],
+        [InlineKeyboardButton("⏳ 10 دقائق", callback_data="set_interval_600")],
+        [InlineKeyboardButton("⏳ 15 دقيقة", callback_data="set_interval_900")],
+        [InlineKeyboardButton("⏳ 30 دقيقة", callback_data="set_interval_1800")],
+        [InlineKeyboardButton("⏳ ساعة", callback_data="set_interval_3600")],
+        [InlineKeyboardButton("⏳ 3 ساعات", callback_data="set_interval_10800")],
+        [InlineKeyboardButton("⏳ 12 ساعة", callback_data="set_interval_43200")],
+        [InlineKeyboardButton("⏳ 24 ساعة", callback_data="set_interval_86400")],
+        [InlineKeyboardButton("🚫 إيقاف التكرار", callback_data="stop_interval")],
+        [InlineKeyboardButton("▶️ بدء التكرار", callback_data="start_interval")],
+        [InlineKeyboardButton("🔙 العودة", callback_data="manage_interval")]
+    ]
+    
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    config = load_config()
+    current_interval = config["groups"][group_id].get("interval", 600)
+    
+    await query.edit_message_text(
+        f"👥 المجموعة: {group_id}\n"
+        f"⏱️ فترة التكرار الحالية: {format_interval(current_interval)}\n\n"
+        "اختر فترة التكرار الجديدة: 👇",
+        reply_markup=reply_markup
+    )
+    
+    return MANAGE_INTERVAL
 async def process_manage_interval(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """معالجة إدارة فترة التكرار"""
     query = update.callback_query
