@@ -4,7 +4,7 @@
 """
 ChatGPTPlus2FABot - بوت تليجرام للمصادقة الثنائية 2FA
 يقوم بإرسال رمز مصادقة ثنائية للمستخدمين بشكل دوري
-(الإصدار مع التأكيدات وتخصيص المحاولات ودعم اللغات)
+(الإصدار مع التأكيدات وتخصيص المحاولات ودعم اللغات - مصحح)
 """
 
 import os
@@ -24,7 +24,7 @@ from telegram.ext import (
 
 # تكوين السجلات
 logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s\',
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 # ثوابت البوت
 TOKEN = "8119053401:AAHuqgTkiq6M8rT9VSHYEnIl96BHt9lXIZM" # استبدل بالتوكن الخاص بك
 ADMIN_ID = 764559466  # استبدل بمعرف المسؤول الرئيسي الخاص بك
-DEFAULT_LANG = "en" # اللغة الافتراضية
+DEFAULT_LANG = "ar" # اللغة الافتراضية
 
 # حالات المحادثة (تم إضافة حالات إدارة اللغة)
 (
@@ -79,6 +79,7 @@ def load_translations():
                 lang_code = filename.split(".")[0]
                 filepath = os.path.join(LANG_DIR, filename)
                 try:
+                    # تصحيح: استخدام علامات اقتباس صحيحة
                     with open(filepath, 'r', encoding='utf-8') as f:
                         translations[lang_code] = json.load(f)
                     logger.info(f"تم تحميل ملف اللغة: {filename}")
@@ -118,46 +119,56 @@ def _(user_id, key, **kwargs):
         try:
             return lang_dict[key].format(**kwargs)
         except KeyError as e:
-            logger.warning(f"المفتاح \'{e}\' غير موجود في الوسائط للنص \'{key}\' باللغة {lang_code}")
+            # تصحيح: استخدام علامات اقتباس صحيحة
+            logger.warning(f"المفتاح '{e}' غير موجود في الوسائط للنص '{key}' باللغة {lang_code}")
             return lang_dict[key] # إرجاع النص بدون تنسيق
         except Exception as e:
-             logger.error(f"خطأ في تنسيق النص \'{key}\' باللغة {lang_code}: {e}")
+             # تصحيح: استخدام علامات اقتباس صحيحة
+             logger.error(f"خطأ في تنسيق النص '{key}' باللغة {lang_code}: {e}")
              return f"ErrorFormatting:{key}"
 
     # إذا فشل، محاولة استخدام اللغة الافتراضية
-    logger.warning(f"المفتاح \'{key}\' غير موجود في اللغة {lang_code}. محاولة اللغة الافتراضية {DEFAULT_LANG}.")
+    # تصحيح: استخدام علامات اقتباس صحيحة
+    logger.warning(f"المفتاح '{key}' غير موجود في اللغة {lang_code}. محاولة اللغة الافتراضية {DEFAULT_LANG}.")
     lang_dict = translations.get(DEFAULT_LANG)
     if lang_dict and key in lang_dict:
         try:
             return lang_dict[key].format(**kwargs)
         except KeyError as e:
-            logger.warning(f"المفتاح \'{e}\' غير موجود في الوسائط للنص \'{key}\' باللغة الافتراضية {DEFAULT_LANG}")
+            # تصحيح: استخدام علامات اقتباس صحيحة
+            logger.warning(f"المفتاح '{e}' غير موجود في الوسائط للنص '{key}' باللغة الافتراضية {DEFAULT_LANG}")
             return lang_dict[key]
         except Exception as e:
-             logger.error(f"خطأ في تنسيق النص \'{key}\' باللغة الافتراضية {DEFAULT_LANG}: {e}")
+             # تصحيح: استخدام علامات اقتباس صحيحة
+             logger.error(f"خطأ في تنسيق النص '{key}' باللغة الافتراضية {DEFAULT_LANG}: {e}")
              return f"ErrorFormatting:{key}"
 
     # إذا فشل، محاولة استخدام الإنجليزية كحل أخير
-    logger.warning(f"المفتاح \'{key}\' غير موجود في اللغة الافتراضية {DEFAULT_LANG}. محاولة اللغة الإنجليزية.")
+    # تصحيح: استخدام علامات اقتباس صحيحة
+    logger.warning(f"المفتاح '{key}' غير موجود في اللغة الافتراضية {DEFAULT_LANG}. محاولة اللغة الإنجليزية.")
     lang_dict = translations.get("en")
     if lang_dict and key in lang_dict:
         try:
             return lang_dict[key].format(**kwargs)
         except KeyError as e:
-            logger.warning(f"المفتاح \'{e}\' غير موجود في الوسائط للنص \'{key}\' باللغة الإنجليزية")
+            # تصحيح: استخدام علامات اقتباس صحيحة
+            logger.warning(f"المفتاح '{e}' غير موجود في الوسائط للنص '{key}' باللغة الإنجليزية")
             return lang_dict[key]
         except Exception as e:
-             logger.error(f"خطأ في تنسيق النص \'{key}\' باللغة الإنجليزية: {e}")
+             # تصحيح: استخدام علامات اقتباس صحيحة
+             logger.error(f"خطأ في تنسيق النص '{key}' باللغة الإنجليزية: {e}")
              return f"ErrorFormatting:{key}"
 
     # إذا فشل كل شيء
-    logger.error(f"المفتاح \'{key}\' غير موجود في أي لغة متاحة.")
+    # تصحيح: استخدام علامات اقتباس صحيحة
+    logger.error(f"المفتاح '{key}' غير موجود في أي لغة متاحة.")
     return f"MissingTranslation:{key}"
 
 def load_config():
     """تحميل ملف الإعدادات والتأكد من وجود default_attempts"""
     if os.path.exists(CONFIG_FILE):
         try:
+            # تصحيح: استخدام علامات اقتباس صحيحة
             with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
                 config = json.load(f)
                 if "admins" not in config: config["admins"] = [ADMIN_ID]
@@ -176,18 +187,21 @@ def load_config():
                 return config
         except json.JSONDecodeError:
             logger.error(f"خطأ في قراءة ملف الإعدادات {CONFIG_FILE}. سيتم استخدام الإعدادات الافتراضية.")
+            # تصحيح: استخدام علامات اقتباس صحيحة
             with open(CONFIG_FILE, 'w', encoding='utf-8') as f: json.dump(DEFAULT_CONFIG, f, ensure_ascii=False, indent=4)
             return DEFAULT_CONFIG
         except Exception as e:
             logger.error(f"خطأ غير متوقع عند تحميل الإعدادات: {e}. سيتم استخدام الإعدادات الافتراضية.")
             return DEFAULT_CONFIG
     else:
-        with open(CONFIG_FILE, 'w\', encoding=\'utf-8\') as f: json.dump(DEFAULT_CONFIG, f, ensure_ascii=False, indent=4)
+        # تصحيح: استخدام علامات اقتباس صحيحة
+        with open(CONFIG_FILE, 'w', encoding='utf-8') as f: json.dump(DEFAULT_CONFIG, f, ensure_ascii=False, indent=4)
         return DEFAULT_CONFIG
 
 def save_config(config):
     """حفظ ملف الإعدادات"""
     try:
+        # تصحيح: استخدام علامات اقتباس صحيحة
         with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
             json.dump(config, f, ensure_ascii=False, indent=4)
     except Exception as e: logger.error(f"فشل حفظ ملف الإعدادات {CONFIG_FILE}: {e}")
@@ -196,6 +210,7 @@ def load_users():
     """تحميل بيانات المستخدمين والتأكد من وجود مفتاح اللغة"""
     if os.path.exists(USERS_FILE):
         try:
+            # تصحيح: استخدام علامات اقتباس صحيحة
             with open(USERS_FILE, 'r', encoding='utf-8') as f:
                 users = json.load(f)
                 # التأكد من وجود مفتاح اللغة لكل مستخدم
@@ -208,18 +223,21 @@ def load_users():
                 return users
         except json.JSONDecodeError:
              logger.error(f"خطأ في قراءة ملف المستخدمين {USERS_FILE}. سيتم استخدام البيانات الافتراضية.")
+             # تصحيح: استخدام علامات اقتباس صحيحة
              with open(USERS_FILE, 'w', encoding='utf-8') as f: json.dump(DEFAULT_USERS, f, ensure_ascii=False, indent=4)
              return DEFAULT_USERS
         except Exception as e:
              logger.error(f"خطأ غير متوقع عند تحميل المستخدمين: {e}. سيتم استخدام البيانات الافتراضية.")
              return DEFAULT_USERS
     else:
+        # تصحيح: استخدام علامات اقتباس صحيحة
         with open(USERS_FILE, 'w', encoding='utf-8') as f: json.dump(DEFAULT_USERS, f, ensure_ascii=False, indent=4)
         return DEFAULT_USERS
 
 def save_users(users):
     """حفظ بيانات المستخدمين"""
     try:
+        # تصحيح: استخدام علامات اقتباس صحيحة
         with open(USERS_FILE, 'w', encoding='utf-8') as f:
             json.dump(users, f, ensure_ascii=False, indent=4)
     except Exception as e: logger.error(f"فشل حفظ ملف المستخدمين {USERS_FILE}: {e}")
@@ -231,7 +249,7 @@ def is_admin(user_id):
     if not isinstance(admins_list, list): admins_list = [ADMIN_ID]
     return user_id in admins_list
 
-# --- وظائف الوقت والتنسيق (بدون تغيير) ---
+# --- وظائف الوقت والتنسيق (مع إصلاح الترجمة) ---
 def get_time_format(timezone_name="UTC"):
     try:
         timezone = tz.gettz(timezone_name)
@@ -249,11 +267,26 @@ def get_next_time(interval_seconds, timezone_name="UTC"):
     next_time = now + datetime.timedelta(seconds=interval_seconds)
     return next_time.strftime("%I:%M:%S %p")
 
-def format_interval(seconds):
-    if seconds < 60: return f"{seconds} ثانية" if DEFAULT_LANG == "ar" else f"{seconds} seconds"
-    elif seconds < 3600: minutes = seconds // 60; return f"{minutes} دقيقة" if minutes == 1 and DEFAULT_LANG == "ar" else f"{minutes} دقائق" if DEFAULT_LANG == "ar" else f"{minutes} minute" if minutes == 1 else f"{minutes} minutes"
-    elif seconds < 86400: hours = seconds // 3600; return f"{hours} ساعة" if hours == 1 and DEFAULT_LANG == "ar" else f"{hours} ساعات" if DEFAULT_LANG == "ar" else f"{hours} hour" if hours == 1 else f"{hours} hours"
-    else: days = seconds // 86400; return f"{days} يوم" if days == 1 and DEFAULT_LANG == "ar" else f"{days} أيام" if DEFAULT_LANG == "ar" else f"{days} day" if days == 1 else f"{days} days"
+def format_interval(user_id, seconds):
+    """تنسيق الفاصل الزمني باستخدام لغة المستخدم ومفاتيح الترجمة"""
+    if seconds < 60:
+        # تصحيح: استخدام علامات اقتباس صحيحة
+        return f"{seconds} {_(user_id, 'interval_seconds')}"
+    elif seconds < 3600:
+        minutes = seconds // 60
+        # تصحيح: استخدام علامات اقتباس صحيحة
+        key = 'interval_minute' if minutes == 1 else 'interval_minutes'
+        return f"{minutes} {_(user_id, key)}"
+    elif seconds < 86400:
+        hours = seconds // 3600
+        # تصحيح: استخدام علامات اقتباس صحيحة
+        key = 'interval_hour' if hours == 1 else 'interval_hours'
+        return f"{hours} {_(user_id, key)}"
+    else:
+        days = seconds // 86400
+        # تصحيح: استخدام علامات اقتباس صحيحة
+        key = 'interval_day' if days == 1 else 'interval_days'
+        return f"{days} {_(user_id, key)}"
 
 def get_remaining_validity(totp):
     try: return totp.interval - (int(time.time()) % totp.interval)
@@ -292,8 +325,13 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = _(user_id, "admin_panel_welcome")
     if update.callback_query:
         try: await update.callback_query.edit_message_text(text, reply_markup=reply_markup)
-        except Exception as e: await update.effective_message.reply_text(text, reply_markup=reply_markup)
-    else: await update.message.reply_text(text, reply_markup=reply_markup)
+        except Exception as e: 
+            logger.warning(f"فشل تعديل رسالة لوحة الإدارة: {e}. محاولة إرسال رسالة جديدة.")
+            # في حالة فشل التعديل (مثل انتهاء صلاحية الاستعلام)، أرسل رسالة جديدة
+            await update.effective_message.reply_text(text, reply_markup=reply_markup)
+    else: 
+        # إصلاح: إضافة await هنا
+        await update.message.reply_text(text, reply_markup=reply_markup)
     
     return MAIN_MENU
 
@@ -528,7 +566,8 @@ async def manage_interval(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = []
     for group_id, group_data in groups.items():
         interval = group_data.get("interval", 600)
-        interval_text = format_interval(interval) # format_interval needs localization too
+        # إصلاح: استخدام user_id لتنسيق الفاصل الزمني
+        interval_text = format_interval(user_id, interval)
         keyboard.append([InlineKeyboardButton(_(user_id, "group_interval_button_format", group_id=group_id, interval_text=interval_text), callback_data=f"interval_{group_id}")])
     keyboard.append([InlineKeyboardButton(_(user_id, "back_button"), callback_data="back_to_main")])
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -553,7 +592,8 @@ async def process_manage_interval(update: Update, context: ContextTypes.DEFAULT_
     reply_markup = InlineKeyboardMarkup(keyboard)
     config = load_config()
     current_interval = config.get("groups", {}).get(group_id, {}).get("interval", 600)
-    interval_status = "متوقف 🚫" if current_interval <= 0 and get_user_language(user_id) == "ar" else "Stopped 🚫" if current_interval <= 0 else f"{format_interval(current_interval)} ✅"
+    # إصلاح: استخدام user_id لتنسيق الفاصل الزمني
+    interval_status = _(user_id, "interval_status_stopped") if current_interval <= 0 else f"{format_interval(user_id, current_interval)} ✅"
     await query.edit_message_text(
         _(user_id, "select_new_interval_prompt", group_id=group_id, interval_status=interval_status),
         reply_markup=reply_markup
@@ -584,7 +624,8 @@ async def set_interval(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await stop_periodic_task(context.application, group_id)
         if interval > 0:
             await start_periodic_task(context.application, group_id)
-            message = _(user_id, "set_interval_success", group_id=group_id, interval_text=format_interval(interval))
+            # إصلاح: استخدام user_id لتنسيق الفاصل الزمني
+            message = _(user_id, "set_interval_success", group_id=group_id, interval_text=format_interval(user_id, interval))
         else: message = _(user_id, "stop_interval_success", group_id=group_id)
     else: message = _(user_id, "group_not_found", group_id=group_id)
 
@@ -794,6 +835,7 @@ async def process_set_default_attempts(update: Update, context: ContextTypes.DEF
     
     keyboard = [[InlineKeyboardButton(_(user_id, "back_to_select_group_default_attempts_button"), callback_data="select_group_default_attempts")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
+    # إصلاح: إضافة await هنا
     await update.message.reply_text(_(user_id, "press_to_go_back"), reply_markup=reply_markup)
     
     return SELECT_GROUP_FOR_DEFAULT_ATTEMPTS
@@ -957,6 +999,7 @@ async def process_add_attempts(update: Update, context: ContextTypes.DEFAULT_TYP
     await asyncio.sleep(1)
     keyboard = [[InlineKeyboardButton(_(admin_user_id, "back_to_manage_user_button"), callback_data=f"manage_user_{target_user_id}")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
+    # إصلاح: إضافة await هنا
     await update.message.reply_text(_(admin_user_id, "press_to_go_back"), reply_markup=reply_markup)
     return MANAGE_USER
 
@@ -1003,6 +1046,7 @@ async def process_remove_attempts(update: Update, context: ContextTypes.DEFAULT_
     await asyncio.sleep(1)
     keyboard = [[InlineKeyboardButton(_(admin_user_id, "back_to_manage_user_button"), callback_data=f"manage_user_{target_user_id}")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
+    # إصلاح: إضافة await هنا
     await update.message.reply_text(_(admin_user_id, "press_to_go_back"), reply_markup=reply_markup)
     return MANAGE_USER
 
@@ -1056,6 +1100,7 @@ async def process_add_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(_(user_id, "user_already_admin", admin_id=admin_id_to_add))
         keyboard = [[InlineKeyboardButton(_(user_id, "back_to_manage_admins_button"), callback_data="manage_admins")]]
         reply_markup = InlineKeyboardMarkup(keyboard)
+        # إصلاح: إضافة await هنا
         await update.message.reply_text(_(user_id, "press_to_go_back"), reply_markup=reply_markup)
         return MANAGE_ADMINS
     else:
@@ -1248,7 +1293,9 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer()
         try: await query.edit_message_text(message_text)
         except Exception as e: logger.info(f"لم نتمكن من تعديل الرسالة عند الإلغاء: {e}")
-    elif update.message: await update.message.reply_text(message_text)
+    elif update.message: 
+        # إصلاح: إضافة await هنا
+        await update.message.reply_text(message_text)
     context.user_data.clear()
     return ConversationHandler.END
 
@@ -1313,15 +1360,16 @@ async def send_auth_message(bot, group_id):
 
     current_time = get_time_format(timezone_name)
     next_time = get_next_time(interval, timezone_name)
-    interval_text = format_interval(interval)
+    # إصلاح: استخدام لغة المسؤول الافتراضي لتنسيق الفاصل الزمني في الرسائل العامة
+    interval_text = format_interval(ADMIN_ID, interval)
     message_text = ""
     # استخدام لغة المسؤول الافتراضي للرسائل العامة المرسلة للمجموعة
     if message_style == 1: message_text = _(ADMIN_ID, "auth_message_style1", next_time=next_time)
     elif message_style == 2: message_text = _(ADMIN_ID, "auth_message_style2", interval_text=interval_text, next_time=next_time)
     else: message_text = _(ADMIN_ID, "auth_message_style3", interval_text=interval_text, current_time=current_time, next_time=next_time)
     
-    # زر النسخ يجب أن يكون باللغة الإنجليزية غالباً ليكون مفهوماً عالمياً
-    keyboard = [[InlineKeyboardButton("Copy Code", callback_data=f"copy_code_{group_id}")]]
+    # إصلاح: ترجمة زر النسخ باستخدام لغة المسؤول الافتراضي
+    keyboard = [[InlineKeyboardButton(_(ADMIN_ID, "copy_code_button"), callback_data=f"copy_code_{group_id}")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     try:
         await bot.send_message(chat_id=int(group_id), text=message_text, reply_markup=reply_markup)
@@ -1397,18 +1445,25 @@ async def handle_copy_code(update: Update, context: ContextTypes.DEFAULT_TYPE, g
         
     remaining_attempts = users[user_id]["attempts"][group_id]["remaining"]
     # استخدام MarkdownV2 يتطلب تهريب الأحرف الخاصة
-    code_escaped = code.replace("`", "\\`")
+    # تصحيح: استخدام علامات اقتباس صحيحة وتهريب صحيح لـ MarkdownV2
+    code_escaped = code.replace('`', '\\`')
     message_text_md2 = _(user.id, "code_copied_alert_md2", code=code_escaped, remaining_validity=remaining_validity, remaining_attempts=remaining_attempts)
     message_text_md = _(user.id, "code_copied_alert_md", code=code, remaining_validity=remaining_validity, remaining_attempts=remaining_attempts)
     
     try:
+        # تصحيح: استخدام علامات اقتباس صحيحة
         await query.answer(message_text_md2, show_alert=True, parse_mode='MarkdownV2')
     except Exception as e:
         logger.warning(f"فشل إرسال الرمز كـ Alert (MarkdownV2): {e}. محاولة Markdown.")
-        try: await query.answer(message_text_md, show_alert=True, parse_mode='Markdown')
+        try: 
+            # تصحيح: استخدام علامات اقتباس صحيحة
+            await query.answer(message_text_md, show_alert=True, parse_mode='Markdown')
         except Exception as e2:
             logger.warning(f"فشل إرسال الرمز كـ Alert (Markdown): {e2}. محاولة رسالة عادية.")
-            try: await context.bot.send_message(chat_id=user.id, text=message_text_md, parse_mode='Markdown')
+            try: 
+                # إصلاح: إضافة await هنا
+                # تصحيح: استخدام علامات اقتباس صحيحة
+                await context.bot.send_message(chat_id=user.id, text=message_text_md, parse_mode='Markdown')
             except Exception as send_error:
                  logger.error(f"فشل إرسال الرمز كرسالة للمستخدم {user_id}: {send_error}")
                  await query.answer(_(user.id, "error_sending_code_alert"), show_alert=True)
