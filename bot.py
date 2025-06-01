@@ -4,6 +4,7 @@
 """
 ChatGPTPlus2FABot - بوت تليجرام للمصادقة الثنائية 2FA
 يقوم بإرسال رمز مصادقة ثنائية للمستخدمين بشكل دوري
+(الإصدار مع التأكيدات وتخصيص المحاولات ودعم اللغات)
 """
 
 import os
@@ -23,1086 +24,1282 @@ from telegram.ext import (
 
 # تكوين السجلات
 logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    format=\'%(asctime)s - %(name)s - %(levelname)s - %(message)s\',
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
 # ثوابت البوت
-TOKEN = "8119053401:AAHuqgTkiq6M8rT9VSHYEnIl96BHt9lXIZM"
-ADMIN_ID = 764559466  # تحويل النص إلى رقم
+TOKEN = "8119053401:AAHuqgTkiq6M8rT9VSHYEnIl96BHt9lXIZM" # استبدل بالتوكن الخاص بك
+ADMIN_ID = 764559466  # استبدل بمعرف المسؤول الرئيسي الخاص بك
+DEFAULT_LANG = "en" # اللغة الافتراضية
 
-# حالات المحادثة
+# حالات المحادثة (تم إضافة حالات إدارة اللغة)
 (
     MAIN_MENU, MANAGE_GROUPS, ADD_GROUP, DELETE_GROUP, EDIT_GROUP,
     ADD_SECRET, EDIT_SECRET, MANAGE_INTERVAL,
     MANAGE_MESSAGE_STYLE, MANAGE_USER_ATTEMPTS, SELECT_GROUP_FOR_USER,
     SELECT_USER, MANAGE_USER, ADD_ATTEMPTS, REMOVE_ATTEMPTS,
-    MANAGE_ADMINS, ADD_ADMIN, REMOVE_ADMIN
-) = range(18)  # تم تصحيح عدد الحالات ليكون 18 بدلاً من 19
+    MANAGE_ADMINS, ADD_ADMIN, REMOVE_ADMIN,
+    CONFIRM_ADD_GROUP, CONFIRM_DELETE_GROUP,
+    CONFIRM_ADD_ADMIN, CONFIRM_REMOVE_ADMIN,
+    SELECT_GROUP_FOR_DEFAULT_ATTEMPTS, SET_DEFAULT_ATTEMPTS,
+    MANAGE_LANGUAGE, SELECT_LANGUAGE # حالات جديدة لإدارة اللغة
+) = range(26) # تم تحديث العدد إلى 26
 
 # ملفات البيانات
 DATA_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_FILE = os.path.join(DATA_DIR, "config.json")
 USERS_FILE = os.path.join(DATA_DIR, "users.json")
+LANG_DIR = DATA_DIR # مجلد ملفات اللغة
 
 # هيكل البيانات الافتراضي
 DEFAULT_CONFIG = {
-    "groups": {},  # {"group_id": {"totp_secret": "SECRET", "interval": 600, "message_style": 1}}
+    "groups": {},  # {"group_id": {"totp_secret": "SECRET", "interval": 600, "message_style": 1, "timezone": "UTC", "default_attempts": 5}}
     "admins": [ADMIN_ID]
 }
 
 DEFAULT_USERS = {
-    # "user_id": {"attempts": {"group_id": {"remaining": 5, "reset_date": "YYYY-MM-DD"}}, "banned": False}
+    # "user_id": {"attempts": {"group_id": {"remaining": 5, "reset_date": "YYYY-MM-DD"}}, "banned": False, "username": "telegram_username", "language": "ar"}
 }
 
-# متغيرات عالمية للتحكم بالمهام الدورية
+# متغيرات عالمية للتحكم بالمهام الدورية والترجمة
 scheduled_tasks = {}
 stop_flags = {}
+translations = {}
 
-# وظائف إدارة البيانات
-def load_config():
-    """تحميل ملف الإعدادات"""
-    if os.path.exists(CONFIG_FILE):
-        with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
-            return json.load(f)
+# --- وظائف إدارة البيانات واللغة ---
+def load_translations():
+    """تحميل ملفات الترجمة"""
+    global translations
+    translations = {}
+    try:
+        for filename in os.listdir(LANG_DIR):
+            if filename.endswith(".json") and filename != "config.json" and filename != "users.json":
+                lang_code = filename.split(".")[0]
+                filepath = os.path.join(LANG_DIR, filename)
+                try:
+                    with open(filepath, \'r\', encoding=\'utf-8\') as f:
+                        translations[lang_code] = json.load(f)
+                    logger.info(f"تم تحميل ملف اللغة: {filename}")
+                except json.JSONDecodeError:
+                    logger.error(f"خطأ في قراءة ملف اللغة {filename}. الملف تالف.")
+                except Exception as e:
+                    logger.error(f"خطأ غير متوقع عند تحميل ملف اللغة {filename}: {e}")
+        if DEFAULT_LANG not in translations:
+             logger.error(f"ملف اللغة الافتراضي ({DEFAULT_LANG}.json) غير موجود أو تالف. سيتم استخدام الإنجليزية كبديل إن وجدت.")
+             if "en" not in translations:
+                 logger.critical("لا يمكن العثور على ملفات لغة صالحة. لا يمكن للبوت العمل بدون ترجمة.")
+                 # يمكن إضافة آلية للخروج أو استخدام قيم افتراضية بسيطة هنا
+    except Exception as e:
+        logger.error(f"خطأ في الوصول إلى مجلد اللغات {LANG_DIR}: {e}")
+
+def get_user_language(user_id):
+    """الحصول على لغة المستخدم"""
+    users = load_users()
+    return users.get(str(user_id), {}).get("language", DEFAULT_LANG)
+
+def set_user_language(user_id, lang_code):
+    """تعيين لغة المستخدم"""
+    users = load_users()
+    user_id_str = str(user_id)
+    if user_id_str not in users:
+        users[user_id_str] = DEFAULT_USERS.get(user_id_str, {"language": lang_code, "attempts": {}, "banned": False, "username": "Unknown"})
     else:
-        # إنشاء ملف الإعدادات إذا لم يكن موجوداً
-        with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
-            json.dump(DEFAULT_CONFIG, f, ensure_ascii=False, indent=4)
+        users[user_id_str]["language"] = lang_code
+    save_users(users)
+
+def _(user_id, key, **kwargs):
+    """الحصول على النص المترجم"""
+    lang_code = get_user_language(user_id)
+    # محاولة الحصول على الترجمة باللغة المحددة
+    lang_dict = translations.get(lang_code)
+    if lang_dict and key in lang_dict:
+        try:
+            return lang_dict[key].format(**kwargs)
+        except KeyError as e:
+            logger.warning(f"المفتاح \'{e}\' غير موجود في الوسائط للنص \'{key}\' باللغة {lang_code}")
+            return lang_dict[key] # إرجاع النص بدون تنسيق
+        except Exception as e:
+             logger.error(f"خطأ في تنسيق النص \'{key}\' باللغة {lang_code}: {e}")
+             return f"ErrorFormatting:{key}"
+
+    # إذا فشل، محاولة استخدام اللغة الافتراضية
+    logger.warning(f"المفتاح \'{key}\' غير موجود في اللغة {lang_code}. محاولة اللغة الافتراضية {DEFAULT_LANG}.")
+    lang_dict = translations.get(DEFAULT_LANG)
+    if lang_dict and key in lang_dict:
+        try:
+            return lang_dict[key].format(**kwargs)
+        except KeyError as e:
+            logger.warning(f"المفتاح \'{e}\' غير موجود في الوسائط للنص \'{key}\' باللغة الافتراضية {DEFAULT_LANG}")
+            return lang_dict[key]
+        except Exception as e:
+             logger.error(f"خطأ في تنسيق النص \'{key}\' باللغة الافتراضية {DEFAULT_LANG}: {e}")
+             return f"ErrorFormatting:{key}"
+
+    # إذا فشل، محاولة استخدام الإنجليزية كحل أخير
+    logger.warning(f"المفتاح \'{key}\' غير موجود في اللغة الافتراضية {DEFAULT_LANG}. محاولة اللغة الإنجليزية.")
+    lang_dict = translations.get("en")
+    if lang_dict and key in lang_dict:
+        try:
+            return lang_dict[key].format(**kwargs)
+        except KeyError as e:
+            logger.warning(f"المفتاح \'{e}\' غير موجود في الوسائط للنص \'{key}\' باللغة الإنجليزية")
+            return lang_dict[key]
+        except Exception as e:
+             logger.error(f"خطأ في تنسيق النص \'{key}\' باللغة الإنجليزية: {e}")
+             return f"ErrorFormatting:{key}"
+
+    # إذا فشل كل شيء
+    logger.error(f"المفتاح \'{key}\' غير موجود في أي لغة متاحة.")
+    return f"MissingTranslation:{key}"
+
+def load_config():
+    """تحميل ملف الإعدادات والتأكد من وجود default_attempts"""
+    if os.path.exists(CONFIG_FILE):
+        try:
+            with open(CONFIG_FILE, \'r\', encoding=\'utf-8\') as f:
+                config = json.load(f)
+                if "admins" not in config: config["admins"] = [ADMIN_ID]
+                config_changed = False
+                if "groups" in config and isinstance(config["groups"], dict):
+                    for group_id in config["groups"]:
+                        if "default_attempts" not in config["groups"][group_id]:
+                            config["groups"][group_id]["default_attempts"] = 5
+                            config_changed = True
+                        elif not isinstance(config["groups"][group_id]["default_attempts"], int) or config["groups"][group_id]["default_attempts"] < 0:
+                             logger.warning(f"قيمة default_attempts غير صالحة للمجموعة {group_id}. سيتم تعيينها إلى 5.")
+                             config["groups"][group_id]["default_attempts"] = 5
+                             config_changed = True
+                else: config["groups"] = {}
+                if config_changed: save_config(config)
+                return config
+        except json.JSONDecodeError:
+            logger.error(f"خطأ في قراءة ملف الإعدادات {CONFIG_FILE}. سيتم استخدام الإعدادات الافتراضية.")
+            with open(CONFIG_FILE, \'w\', encoding=\'utf-8\') as f: json.dump(DEFAULT_CONFIG, f, ensure_ascii=False, indent=4)
+            return DEFAULT_CONFIG
+        except Exception as e:
+            logger.error(f"خطأ غير متوقع عند تحميل الإعدادات: {e}. سيتم استخدام الإعدادات الافتراضية.")
+            return DEFAULT_CONFIG
+    else:
+        with open(CONFIG_FILE, \'w\', encoding=\'utf-8\') as f: json.dump(DEFAULT_CONFIG, f, ensure_ascii=False, indent=4)
         return DEFAULT_CONFIG
 
 def save_config(config):
     """حفظ ملف الإعدادات"""
-    with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
-        json.dump(config, f, ensure_ascii=False, indent=4)
+    try:
+        with open(CONFIG_FILE, \'w\', encoding=\'utf-8\') as f:
+            json.dump(config, f, ensure_ascii=False, indent=4)
+    except Exception as e: logger.error(f"فشل حفظ ملف الإعدادات {CONFIG_FILE}: {e}")
 
 def load_users():
-    """تحميل بيانات المستخدمين"""
+    """تحميل بيانات المستخدمين والتأكد من وجود مفتاح اللغة"""
     if os.path.exists(USERS_FILE):
-        with open(USERS_FILE, 'r', encoding='utf-8') as f:
-            return json.load(f)
+        try:
+            with open(USERS_FILE, \'r\', encoding=\'utf-8\') as f:
+                users = json.load(f)
+                # التأكد من وجود مفتاح اللغة لكل مستخدم
+                users_changed = False
+                for user_id in users:
+                    if "language" not in users[user_id]:
+                        users[user_id]["language"] = DEFAULT_LANG
+                        users_changed = True
+                if users_changed: save_users(users)
+                return users
+        except json.JSONDecodeError:
+             logger.error(f"خطأ في قراءة ملف المستخدمين {USERS_FILE}. سيتم استخدام البيانات الافتراضية.")
+             with open(USERS_FILE, \'w\', encoding=\'utf-8\') as f: json.dump(DEFAULT_USERS, f, ensure_ascii=False, indent=4)
+             return DEFAULT_USERS
+        except Exception as e:
+             logger.error(f"خطأ غير متوقع عند تحميل المستخدمين: {e}. سيتم استخدام البيانات الافتراضية.")
+             return DEFAULT_USERS
     else:
-        # إنشاء ملف المستخدمين إذا لم يكن موجوداً
-        with open(USERS_FILE, 'w', encoding='utf-8') as f:
-            json.dump(DEFAULT_USERS, f, ensure_ascii=False, indent=4)
+        with open(USERS_FILE, \'w\', encoding=\'utf-8\') as f: json.dump(DEFAULT_USERS, f, ensure_ascii=False, indent=4)
         return DEFAULT_USERS
 
 def save_users(users):
     """حفظ بيانات المستخدمين"""
-    with open(USERS_FILE, 'w', encoding='utf-8') as f:
-        json.dump(users, f, ensure_ascii=False, indent=4)
+    try:
+        with open(USERS_FILE, \'w\', encoding=\'utf-8\') as f:
+            json.dump(users, f, ensure_ascii=False, indent=4)
+    except Exception as e: logger.error(f"فشل حفظ ملف المستخدمين {USERS_FILE}: {e}")
 
 def is_admin(user_id):
     """التحقق مما إذا كان المستخدم مسؤولاً"""
     config = load_config()
-    return user_id in config["admins"]
+    admins_list = config.get("admins", [])
+    if not isinstance(admins_list, list): admins_list = [ADMIN_ID]
+    return user_id in admins_list
 
+# --- وظائف الوقت والتنسيق (بدون تغيير) ---
 def get_time_format(timezone_name="UTC"):
-    """الحصول على الوقت الحالي بتنسيق 12 ساعة"""
-    timezone = tz.gettz(timezone_name)
+    try:
+        timezone = tz.gettz(timezone_name)
+        if timezone is None: timezone = tz.gettz("UTC")
+    except Exception as e: timezone = tz.gettz("UTC")
     now = datetime.datetime.now(timezone)
-    return now.strftime("%I:%M:%S %p")  # تنسيق 12 ساعة مع AM/PM
+    return now.strftime("%I:%M:%S %p")
 
 def get_next_time(interval_seconds, timezone_name="UTC"):
-    """حساب وقت الرمز التالي"""
-    timezone = tz.gettz(timezone_name)
+    try:
+        timezone = tz.gettz(timezone_name)
+        if timezone is None: timezone = tz.gettz("UTC")
+    except Exception as e: timezone = tz.gettz("UTC")
     now = datetime.datetime.now(timezone)
     next_time = now + datetime.timedelta(seconds=interval_seconds)
-    return next_time.strftime("%I:%M:%S %p")  # تنسيق 12 ساعة مع AM/PM
+    return next_time.strftime("%I:%M:%S %p")
 
 def format_interval(seconds):
-    """تنسيق الفاصل الزمني بشكل مقروء"""
-    if seconds < 60:
-        return f"{seconds} ثانية"
-    elif seconds < 3600:
-        return f"{seconds // 60} دقيقة"
-    elif seconds < 86400:
-        return f"{seconds // 3600} ساعة"
-    else:
-        return f"{seconds // 86400} يوم"
+    if seconds < 60: return f"{seconds} ثانية" if DEFAULT_LANG == "ar" else f"{seconds} seconds"
+    elif seconds < 3600: minutes = seconds // 60; return f"{minutes} دقيقة" if minutes == 1 and DEFAULT_LANG == "ar" else f"{minutes} دقائق" if DEFAULT_LANG == "ar" else f"{minutes} minute" if minutes == 1 else f"{minutes} minutes"
+    elif seconds < 86400: hours = seconds // 3600; return f"{hours} ساعة" if hours == 1 and DEFAULT_LANG == "ar" else f"{hours} ساعات" if DEFAULT_LANG == "ar" else f"{hours} hour" if hours == 1 else f"{hours} hours"
+    else: days = seconds // 86400; return f"{days} يوم" if days == 1 and DEFAULT_LANG == "ar" else f"{days} أيام" if DEFAULT_LANG == "ar" else f"{days} day" if days == 1 else f"{days} days"
 
 def get_remaining_validity(totp):
-    """حساب الوقت المتبقي لصلاحية الرمز بالثواني"""
-    return 30 - int(time.time()) % 30
+    try: return totp.interval - (int(time.time()) % totp.interval)
+    except Exception as e: logger.error(f"خطأ في حساب صلاحية الرمز: {e}"); return 30
 
-    # وظائف البوت الأساسية
+# --- وظائف البوت الأساسية (مع الترجمة) ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """التعامل مع أمر /start"""
     user = update.effective_user
-    await update.message.reply_text(
-        f"مرحباً {user.first_name}! 👋 هذا بوت المصادقة الثنائية 2FA.\n"
-        f"إذا كنت مسؤولاً، يمكنك استخدام الأمر /admin للوصول إلى لوحة التحكم."
-    )
+    user_id = user.id
+    # تسجيل المستخدم وتعيين اللغة الافتراضية إذا لم يكن موجوداً
+    users = load_users()
+    if str(user_id) not in users:
+        users[str(user_id)] = {"language": DEFAULT_LANG, "attempts": {}, "banned": False, "username": user.username or f"{user.first_name} (No Username)"}
+        save_users(users)
+        # يمكن إضافة رسالة ترحيب خاصة للمستخدم الجديد أو سؤال عن اللغة هنا
+    
+    await update.message.reply_text(_(user_id, "welcome_message", name=user.first_name))
 
 async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """التعامل مع أمر /admin"""
     user_id = update.effective_user.id
-    
     if not is_admin(user_id):
-        await update.message.reply_text("عذراً، هذا الأمر متاح للمسؤولين فقط. 🚫")
+        await update.message.reply_text(_(user_id, "admin_only_command"))
         return ConversationHandler.END
     
     keyboard = [
-        [InlineKeyboardButton("⚙️ إدارة المجموعات/TOTP_SECRET", callback_data="manage_groups")],
-        [InlineKeyboardButton("⏱️ إدارة فترة التكرار", callback_data="manage_interval")],
-        [InlineKeyboardButton("🎨 إدارة شكل/توقيت الرسالة", callback_data="manage_message_style")],
-        [InlineKeyboardButton("🔢 إدارة محاولات المستخدمين", callback_data="manage_user_attempts")],
-        [InlineKeyboardButton("👮 إدارة المسؤولين", callback_data="manage_admins")],
-        [InlineKeyboardButton("❌ إلغاء", callback_data="cancel")]
+        [InlineKeyboardButton(_(user_id, "manage_groups_button"), callback_data="manage_groups")],
+        [InlineKeyboardButton(_(user_id, "manage_interval_button"), callback_data="manage_interval")],
+        [InlineKeyboardButton(_(user_id, "manage_style_button"), callback_data="manage_message_style")],
+        [InlineKeyboardButton(_(user_id, "manage_attempts_button"), callback_data="manage_user_attempts")],
+        [InlineKeyboardButton(_(user_id, "manage_admins_button"), callback_data="manage_admins")],
+        [InlineKeyboardButton(_(user_id, "manage_language_button"), callback_data="manage_language")], # زر إدارة اللغة
+        [InlineKeyboardButton(_(user_id, "cancel_button"), callback_data="cancel")]
     ]
-    
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text("مرحباً بك في لوحة الإدارة. يرجى اختيار إحدى الخيارات: 👇", reply_markup=reply_markup)
+    
+    text = _(user_id, "admin_panel_welcome")
+    if update.callback_query:
+        try: await update.callback_query.edit_message_text(text, reply_markup=reply_markup)
+        except Exception as e: await update.effective_message.reply_text(text, reply_markup=reply_markup)
+    else: await update.message.reply_text(text, reply_markup=reply_markup)
     
     return MAIN_MENU
 
-# وظائف إدارة المجموعات
+# --- وظائف إدارة المجموعات (مع الترجمة والتأكيد) ---
 async def manage_groups(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """إدارة المجموعات وTOTP_SECRET"""
     query = update.callback_query
+    user_id = query.from_user.id
     await query.answer()
-    
     keyboard = [
-        [InlineKeyboardButton("➕ إضافة مجموعة", callback_data="add_group")],
-        [InlineKeyboardButton("🗑️ حذف مجموعة", callback_data="delete_group")],
-        [InlineKeyboardButton("✏️ تعديل مجموعة", callback_data="edit_group")],
-        [InlineKeyboardButton("🔙 العودة", callback_data="back_to_main")]
+        [InlineKeyboardButton(_(user_id, "add_group_button"), callback_data="add_group")],
+        [InlineKeyboardButton(_(user_id, "delete_group_button"), callback_data="delete_group")],
+        [InlineKeyboardButton(_(user_id, "edit_secret_button"), callback_data="edit_group")],
+        [InlineKeyboardButton(_(user_id, "back_button"), callback_data="back_to_main")]
     ]
-    
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await query.edit_message_text("يرجى اختيار إحدى العمليات لإدارة المجموعات: 👇", reply_markup=reply_markup)
-    
+    await query.edit_message_text(_(user_id, "manage_groups_menu_title"), reply_markup=reply_markup)
     return MANAGE_GROUPS
 
+# --- إضافة مجموعة (مع الترجمة والتأكيد) ---
 async def add_group(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """إضافة مجموعة جديدة"""
     query = update.callback_query
+    user_id = query.from_user.id
     await query.answer()
-    
-    await query.edit_message_text(
-        "يرجى إدخال معرف المجموعة (مثال: -100XXXXXXXXXX): 🆔"
-    )
-    
+    await query.edit_message_text(_(user_id, "add_group_prompt"))
     return ADD_GROUP
 
 async def process_add_group(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة إضافة المجموعة"""
+    user_id = update.effective_user.id
     group_id = update.message.text.strip()
-    
-    if not group_id.startswith("-100") or not group_id[4:].isdigit():
-        await update.message.reply_text(
-            "معرف المجموعة غير صالح. ❌ يجب أن يبدأ بـ -100 متبوعاً بأرقام.\n"
-            "يرجى إدخال معرف المجموعة مرة أخرى: 🆔"
-        )
+    if not group_id.startswith("-100") or not group_id[1:].isdigit():
+        await update.message.reply_text(_(user_id, "invalid_group_id"))
         return ADD_GROUP
     
+    config = load_config()
+    if group_id in config.get("groups", {}):
+         await update.message.reply_text(_(user_id, "group_already_exists", group_id=group_id))
+         return ADD_GROUP
+
     context.user_data["group_id"] = group_id
-    
-    await update.message.reply_text(
-        "تم حفظ معرف المجموعة بنجاح. ✅\n"
-        "الآن يرجى إدخال TOTP_SECRET الخاص بالمصادقة الثنائية: 🔑"
-    )
-    
+    await update.message.reply_text(_(user_id, "group_id_saved"))
     return ADD_SECRET
 
 async def process_add_secret(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة إضافة TOTP_SECRET"""
+    user_id = update.effective_user.id
     totp_secret = update.message.text.strip()
     group_id = context.user_data.get("group_id")
-    
-    try:
-        totp = pyotp.TOTP(totp_secret)
-        totp.now()
+    try: pyotp.TOTP(totp_secret).now()
     except Exception as e:
-        await update.message.reply_text(
-            f"TOTP_SECRET غير صالح: ❌ {str(e)}\n"
-            "يرجى إدخال TOTP_SECRET صالح: 🔑"
-        )
+        await update.message.reply_text(_(user_id, "invalid_totp_secret", error=str(e)))
         return ADD_SECRET
     
-    config = load_config()
-    config["groups"][group_id] = {
-        "totp_secret": totp_secret,
-        "interval": 600,
-        "message_style": 1,
-        "timezone": "UTC" # إضافة المنطقة الزمنية الافتراضية
-    }
-    save_config(config)
+    context.user_data["totp_secret"] = totp_secret
+    keyboard = [
+        [InlineKeyboardButton(_(user_id, "confirm_add_group_yes"), callback_data="confirm_add_group_yes")],
+        [InlineKeyboardButton(_(user_id, "confirm_add_group_no"), callback_data="manage_groups")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text(_(user_id, "confirm_add_group_prompt", group_id=group_id), reply_markup=reply_markup)
+    return CONFIRM_ADD_GROUP
+
+async def execute_add_group(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user_id = query.from_user.id
+    await query.answer()
+    group_id = context.user_data.get("group_id")
+    totp_secret = context.user_data.get("totp_secret")
     
-    await start_periodic_task(context.application, group_id) # تمرير application بدلاً من context
+    if not group_id or not totp_secret:
+        await query.edit_message_text(_(user_id, "generic_error"))
+        return await admin_command(update, context)
+        
+    config = load_config()
+    if "groups" not in config or not isinstance(config["groups"], dict): config["groups"] = {}
+        
+    config["groups"][group_id] = {"totp_secret": totp_secret, "interval": 600, "message_style": 1, "timezone": "UTC", "default_attempts": 5}
+    save_config(config)
+    await start_periodic_task(context.application, group_id)
     
     keyboard = [
-        [InlineKeyboardButton("🔙 العودة إلى إدارة المجموعات", callback_data="manage_groups")],
-        [InlineKeyboardButton("🏠 العودة إلى القائمة الرئيسية", callback_data="back_to_main")]
+        [InlineKeyboardButton(_(user_id, "back_to_manage_groups_button"), callback_data="manage_groups")],
+        [InlineKeyboardButton(_(user_id, "back_to_main_button"), callback_data="back_to_main")]
     ]
-    
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text(
-        f"تم إضافة المجموعة {group_id} مع TOTP_SECRET بنجاح! 🎉",
-        reply_markup=reply_markup
-    )
+    await query.edit_message_text(_(user_id, "add_group_success", group_id=group_id), reply_markup=reply_markup)
     
+    context.user_data.pop("group_id", None)
+    context.user_data.pop("totp_secret", None)
     return MAIN_MENU
 
+# --- حذف مجموعة (مع الترجمة والتأكيد) ---
 async def delete_group(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """حذف مجموعة"""
     query = update.callback_query
+    user_id = query.from_user.id
     await query.answer()
-    
     config = load_config()
     groups = config.get("groups", {})
-    
     if not groups:
-        keyboard = [[InlineKeyboardButton("🔙 العودة", callback_data="manage_groups")]]
+        keyboard = [[InlineKeyboardButton(_(user_id, "back_button"), callback_data="manage_groups")]]
         reply_markup = InlineKeyboardMarkup(keyboard)
-        await query.edit_message_text("لا توجد مجموعات مضافة حالياً. 🤷‍♂️", reply_markup=reply_markup)
+        await query.edit_message_text(_(user_id, "no_groups_to_delete"), reply_markup=reply_markup)
         return MANAGE_GROUPS
     
     keyboard = []
     for group_id in groups:
-        keyboard.append([InlineKeyboardButton(f"👥 المجموعة: {group_id}", callback_data=f"del_group_{group_id}")])
-    
-    keyboard.append([InlineKeyboardButton("🔙 العودة", callback_data="manage_groups")])
+        keyboard.append([InlineKeyboardButton(_(user_id, "group_button_format", group_id=group_id), callback_data=f"confirm_del_group_{group_id}")])
+    keyboard.append([InlineKeyboardButton(_(user_id, "back_button"), callback_data="manage_groups")])
     reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    await query.edit_message_text("اختر المجموعة التي تريد حذفها: 👇", reply_markup=reply_markup)
-    
+    await query.edit_message_text(_(user_id, "select_group_to_delete"), reply_markup=reply_markup)
     return DELETE_GROUP
 
-async def process_delete_group(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة حذف المجموعة"""
+async def confirm_delete_group(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    user_id = query.from_user.id
     await query.answer()
-    
-    group_id = query.data.replace("del_group_", "")
-    
-    await stop_periodic_task(context.application, group_id) # تمرير application بدلاً من context
-    
+    group_id = query.data.replace("confirm_del_group_", "")
+    context.user_data["delete_group_id"] = group_id
+    keyboard = [
+        [InlineKeyboardButton(_(user_id, "confirm_delete_group_yes"), callback_data="execute_del_group_yes")],
+        [InlineKeyboardButton(_(user_id, "confirm_delete_group_no"), callback_data="manage_groups")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.edit_message_text(_(user_id, "confirm_delete_group_prompt", group_id=group_id), reply_markup=reply_markup)
+    return CONFIRM_DELETE_GROUP
+
+async def execute_delete_group(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user_id = query.from_user.id
+    await query.answer()
+    group_id = context.user_data.get("delete_group_id")
+    if not group_id:
+        await query.edit_message_text(_(user_id, "generic_error"))
+        return await admin_command(update, context)
+        
+    await stop_periodic_task(context.application, group_id)
     config = load_config()
-    if group_id in config["groups"]:
+    message = ""
+    if "groups" in config and group_id in config["groups"]:
         del config["groups"][group_id]
         save_config(config)
-    
+        users = load_users()
+        users_changed = False
+        for user_id_str in list(users.keys()):
+            if "attempts" in users[user_id_str] and group_id in users[user_id_str]["attempts"]:
+                del users[user_id_str]["attempts"][group_id]
+                users_changed = True
+                if not users[user_id_str]["attempts"]: del users[user_id_str]["attempts"]
+        if users_changed: save_users(users)
+        message = _(user_id, "delete_group_success", group_id=group_id)
+    else: message = _(user_id, "group_not_found_or_deleted", group_id=group_id)
+
     keyboard = [
-        [InlineKeyboardButton("🔙 العودة إلى إدارة المجموعات", callback_data="manage_groups")],
-        [InlineKeyboardButton("🏠 العودة إلى القائمة الرئيسية", callback_data="back_to_main")]
+        [InlineKeyboardButton(_(user_id, "back_to_manage_groups_button"), callback_data="manage_groups")],
+        [InlineKeyboardButton(_(user_id, "back_to_main_button"), callback_data="back_to_main")]
     ]
-    
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await query.edit_message_text(f"تم حذف المجموعة {group_id} بنجاح! ✅", reply_markup=reply_markup)
-    
+    await query.edit_message_text(message, reply_markup=reply_markup)
+    context.user_data.pop("delete_group_id", None)
     return MAIN_MENU
 
+# --- تعديل TOTP Secret (مع الترجمة) ---
 async def edit_group(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """تعديل مجموعة"""
     query = update.callback_query
+    user_id = query.from_user.id
     await query.answer()
-    
     config = load_config()
     groups = config.get("groups", {})
-    
     if not groups:
-        keyboard = [[InlineKeyboardButton("🔙 العودة", callback_data="manage_groups")]]
+        keyboard = [[InlineKeyboardButton(_(user_id, "back_button"), callback_data="manage_groups")]]
         reply_markup = InlineKeyboardMarkup(keyboard)
-        await query.edit_message_text("لا توجد مجموعات مضافة حالياً. 🤷‍♂️", reply_markup=reply_markup)
+        await query.edit_message_text(_(user_id, "no_groups_to_edit"), reply_markup=reply_markup)
         return MANAGE_GROUPS
     
     keyboard = []
     for group_id in groups:
-        keyboard.append([InlineKeyboardButton(f"👥 المجموعة: {group_id}", callback_data=f"edit_group_{group_id}")])
-    
-    keyboard.append([InlineKeyboardButton("🔙 العودة", callback_data="manage_groups")])
+        keyboard.append([InlineKeyboardButton(_(user_id, "group_button_format", group_id=group_id), callback_data=f"edit_group_{group_id}")])
+    keyboard.append([InlineKeyboardButton(_(user_id, "back_button"), callback_data="manage_groups")])
     reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    await query.edit_message_text("اختر المجموعة التي تريد تعديلها: 👇", reply_markup=reply_markup)
-    
+    await query.edit_message_text(_(user_id, "select_group_to_edit_secret"), reply_markup=reply_markup)
     return EDIT_GROUP
 
 async def process_edit_group(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة تعديل المجموعة"""
     query = update.callback_query
+    user_id = query.from_user.id
     await query.answer()
-    
     group_id = query.data.replace("edit_group_", "")
     context.user_data["edit_group_id"] = group_id
-    
-    await query.edit_message_text(
-        f"يرجى إدخال TOTP_SECRET الجديد للمجموعة {group_id}: 🔑"
-    )
-    
+    await query.edit_message_text(_(user_id, "enter_new_secret_prompt", group_id=group_id))
     return EDIT_SECRET
 
 async def process_edit_secret(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة تعديل TOTP_SECRET"""
+    user_id = update.effective_user.id
     totp_secret = update.message.text.strip()
     group_id = context.user_data.get("edit_group_id")
-    
-    try:
-        totp = pyotp.TOTP(totp_secret)
-        totp.now()
+    try: pyotp.TOTP(totp_secret).now()
     except Exception as e:
-        await update.message.reply_text(
-            f"TOTP_SECRET غير صالح: ❌ {str(e)}\n"
-            "يرجى إدخال TOTP_SECRET صالح: 🔑"
-        )
+        await update.message.reply_text(_(user_id, "invalid_totp_secret", error=str(e)))
         return EDIT_SECRET
     
     config = load_config()
-    if group_id in config["groups"]:
+    message = ""
+    if "groups" in config and group_id in config["groups"]:
         config["groups"][group_id]["totp_secret"] = totp_secret
         save_config(config)
-    
+        message = _(user_id, "edit_secret_success", group_id=group_id)
+        if group_id in scheduled_tasks:
+            await stop_periodic_task(context.application, group_id)
+            await start_periodic_task(context.application, group_id)
+    else: message = _(user_id, "group_not_found", group_id=group_id)
+
     keyboard = [
-        [InlineKeyboardButton("🔙 العودة إلى إدارة المجموعات", callback_data="manage_groups")],
-        [InlineKeyboardButton("🏠 العودة إلى القائمة الرئيسية", callback_data="back_to_main")]
+        [InlineKeyboardButton(_(user_id, "back_to_manage_groups_button"), callback_data="manage_groups")],
+        [InlineKeyboardButton(_(user_id, "back_to_main_button"), callback_data="back_to_main")]
     ]
-    
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text(
-        f"تم تحديث TOTP_SECRET للمجموعة {group_id} بنجاح! ✅",
-        reply_markup=reply_markup
-    )
-    
+    await update.message.reply_text(message, reply_markup=reply_markup)
+    context.user_data.pop("edit_group_id", None)
     return MAIN_MENU
 
-# وظائف إدارة فترة التكرار
+# --- وظائف إدارة فترة التكرار (مع الترجمة) ---
 async def manage_interval(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """إدارة فترة التكرار"""
     query = update.callback_query
+    user_id = query.from_user.id
     await query.answer()
-    
     config = load_config()
     groups = config.get("groups", {})
-    
     if not groups:
-        keyboard = [[InlineKeyboardButton("🔙 العودة", callback_data="back_to_main")]]
+        keyboard = [[InlineKeyboardButton(_(user_id, "back_button"), callback_data="back_to_main")]]
         reply_markup = InlineKeyboardMarkup(keyboard)
-        await query.edit_message_text("لا توجد مجموعات مضافة حالياً. 🤷‍♂️", reply_markup=reply_markup)
+        await query.edit_message_text(_(user_id, "no_groups_for_interval"), reply_markup=reply_markup)
         return MAIN_MENU
     
     keyboard = []
-    for group_id in groups:
-        interval = config["groups"][group_id].get("interval", 600)
-        interval_text = format_interval(interval)
-        keyboard.append([InlineKeyboardButton(f"👥 المجموعة: {group_id} ({interval_text})", callback_data=f"interval_{group_id}")])
-    
-    keyboard.append([InlineKeyboardButton("🔙 العودة", callback_data="back_to_main")])
+    for group_id, group_data in groups.items():
+        interval = group_data.get("interval", 600)
+        interval_text = format_interval(interval) # format_interval needs localization too
+        keyboard.append([InlineKeyboardButton(_(user_id, "group_interval_button_format", group_id=group_id, interval_text=interval_text), callback_data=f"interval_{group_id}")])
+    keyboard.append([InlineKeyboardButton(_(user_id, "back_button"), callback_data="back_to_main")])
     reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    await query.edit_message_text("اختر المجموعة لتعديل فترة التكرار: 👇", reply_markup=reply_markup)
-    
+    await query.edit_message_text(_(user_id, "select_group_for_interval"), reply_markup=reply_markup)
     return MANAGE_INTERVAL
 
 async def process_manage_interval(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة إدارة فترة التكرار"""
     query = update.callback_query
+    user_id = query.from_user.id
     await query.answer()
-    
     group_id = query.data.replace("interval_", "")
     context.user_data["interval_group_id"] = group_id
-    
     keyboard = [
-        [InlineKeyboardButton("⏳ 1 دقيقة", callback_data="set_interval_60")],
-        [InlineKeyboardButton("⏳ 5 دقائق", callback_data="set_interval_300")],
-        [InlineKeyboardButton("⏳ 10 دقائق", callback_data="set_interval_600")],
-        [InlineKeyboardButton("⏳ 15 دقيقة", callback_data="set_interval_900")],
-        [InlineKeyboardButton("⏳ 30 دقيقة", callback_data="set_interval_1800")],
-        [InlineKeyboardButton("⏳ ساعة", callback_data="set_interval_3600")],
-        [InlineKeyboardButton("⏳ 3 ساعات", callback_data="set_interval_10800")],
-        [InlineKeyboardButton("⏳ 12 ساعة", callback_data="set_interval_43200")],
-        [InlineKeyboardButton("⏳ 24 ساعة", callback_data="set_interval_86400")],
-        [InlineKeyboardButton("🚫 إيقاف التكرار", callback_data="stop_interval")],
-        [InlineKeyboardButton("▶️ بدء التكرار", callback_data="start_interval")],
-        [InlineKeyboardButton("🔙 العودة", callback_data="manage_interval")]
+        [InlineKeyboardButton(_(user_id, "interval_1_min"), callback_data="set_interval_60"), InlineKeyboardButton(_(user_id, "interval_5_min"), callback_data="set_interval_300")],
+        [InlineKeyboardButton(_(user_id, "interval_10_min"), callback_data="set_interval_600"), InlineKeyboardButton(_(user_id, "interval_15_min"), callback_data="set_interval_900")],
+        [InlineKeyboardButton(_(user_id, "interval_30_min"), callback_data="set_interval_1800"), InlineKeyboardButton(_(user_id, "interval_1_hour"), callback_data="set_interval_3600")],
+        [InlineKeyboardButton(_(user_id, "interval_3_hours"), callback_data="set_interval_10800"), InlineKeyboardButton(_(user_id, "interval_12_hours"), callback_data="set_interval_43200")],
+        [InlineKeyboardButton(_(user_id, "interval_24_hours"), callback_data="set_interval_86400")],
+        [InlineKeyboardButton(_(user_id, "interval_stop"), callback_data="set_interval_0")],
+        [InlineKeyboardButton(_(user_id, "back_button"), callback_data="manage_interval")]
     ]
-    
     reply_markup = InlineKeyboardMarkup(keyboard)
-    
     config = load_config()
-    current_interval = config["groups"][group_id].get("interval", 600)
-    
+    current_interval = config.get("groups", {}).get(group_id, {}).get("interval", 600)
+    interval_status = "متوقف 🚫" if current_interval <= 0 and get_user_language(user_id) == "ar" else "Stopped 🚫" if current_interval <= 0 else f"{format_interval(current_interval)} ✅"
     await query.edit_message_text(
-        f"👥 المجموعة: {group_id}\n"
-        f"⏱️ فترة التكرار الحالية: {format_interval(current_interval)}\n\n"
-        "اختر فترة التكرار الجديدة: 👇",
+        _(user_id, "select_new_interval_prompt", group_id=group_id, interval_status=interval_status),
         reply_markup=reply_markup
     )
-    
     return MANAGE_INTERVAL
 
 async def set_interval(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """تعيين فترة التكرار"""
     query = update.callback_query
+    user_id = query.from_user.id
     await query.answer()
-    
     group_id = context.user_data.get("interval_group_id")
-    
-    if query.data == "stop_interval":
-        await stop_periodic_task(context.application, group_id) # تمرير application
+    if not group_id:
+        await query.edit_message_text(_(user_id, "generic_error"))
+        return await admin_command(update, context)
         
-        keyboard = [
-            [InlineKeyboardButton("🔙 العودة إلى إدارة فترة التكرار", callback_data="manage_interval")],
-            [InlineKeyboardButton("🏠 العودة إلى القائمة الرئيسية", callback_data="back_to_main")]
-        ]
-        
+    try: interval = int(query.data.replace("set_interval_", ""))
+    except ValueError:
+        keyboard = [[InlineKeyboardButton(_(user_id, "back_to_manage_interval_button"), callback_data="manage_interval")]]
         reply_markup = InlineKeyboardMarkup(keyboard)
-        await query.edit_message_text(
-            f"تم إيقاف التكرار للمجموعة {group_id} بنجاح! 🚫",
-            reply_markup=reply_markup
-        )
-        
-    elif query.data == "start_interval":
-        await start_periodic_task(context.application, group_id) # تمرير application
-        
-        keyboard = [
-            [InlineKeyboardButton("🔙 العودة إلى إدارة فترة التكرار", callback_data="manage_interval")],
-            [InlineKeyboardButton("🏠 العودة إلى القائمة الرئيسية", callback_data="back_to_main")]
-        ]
-        
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await query.edit_message_text(
-            f"تم بدء التكرار للمجموعة {group_id} بنجاح! ▶️",
-            reply_markup=reply_markup
-        )
-        
-    else:
-        interval = int(query.data.replace("set_interval_", ""))
-        
-        config = load_config()
-        if group_id in config["groups"]:
-            config["groups"][group_id]["interval"] = interval
-            save_config(config)
-        
-        await stop_periodic_task(context.application, group_id) # تمرير application
-        await start_periodic_task(context.application, group_id) # تمرير application
-        
-        keyboard = [
-            [InlineKeyboardButton("🔙 العودة إلى إدارة فترة التكرار", callback_data="manage_interval")],
-            [InlineKeyboardButton("🏠 العودة إلى القائمة الرئيسية", callback_data="back_to_main")]
-        ]
-        
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await query.edit_message_text(
-            f"تم تعيين فترة التكرار للمجموعة {group_id} إلى {format_interval(interval)} بنجاح! ✅",
-            reply_markup=reply_markup
-        )
-    
+        await query.edit_message_text(_(user_id, "invalid_selection"), reply_markup=reply_markup)
+        return MANAGE_INTERVAL
+
+    config = load_config()
+    message = ""
+    if "groups" in config and group_id in config["groups"]:
+        config["groups"][group_id]["interval"] = interval
+        save_config(config)
+        await stop_periodic_task(context.application, group_id)
+        if interval > 0:
+            await start_periodic_task(context.application, group_id)
+            message = _(user_id, "set_interval_success", group_id=group_id, interval_text=format_interval(interval))
+        else: message = _(user_id, "stop_interval_success", group_id=group_id)
+    else: message = _(user_id, "group_not_found", group_id=group_id)
+
+    keyboard = [
+        [InlineKeyboardButton(_(user_id, "back_to_manage_interval_button"), callback_data="manage_interval")],
+        [InlineKeyboardButton(_(user_id, "back_to_main_button"), callback_data="back_to_main")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.edit_message_text(message, reply_markup=reply_markup)
+    context.user_data.pop("interval_group_id", None)
     return MAIN_MENU
 
-# وظائف إدارة شكل الرسالة
+# --- وظائف إدارة شكل الرسالة (مع الترجمة) ---
 async def manage_message_style(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """إدارة شكل/توقيت الرسالة"""
     query = update.callback_query
+    user_id = query.from_user.id
     await query.answer()
-    
     config = load_config()
     groups = config.get("groups", {})
-    
     if not groups:
-        keyboard = [[InlineKeyboardButton("🔙 العودة", callback_data="back_to_main")]]
+        keyboard = [[InlineKeyboardButton(_(user_id, "back_button"), callback_data="back_to_main")]]
         reply_markup = InlineKeyboardMarkup(keyboard)
-        await query.edit_message_text("لا توجد مجموعات مضافة حالياً. 🤷‍♂️", reply_markup=reply_markup)
+        await query.edit_message_text(_(user_id, "no_groups_for_style"), reply_markup=reply_markup)
         return MAIN_MENU
     
     keyboard = []
-    for group_id in groups:
-        style = config["groups"][group_id].get("message_style", 1)
-        timezone = config["groups"][group_id].get("timezone", "UTC")
-        keyboard.append([InlineKeyboardButton(f"👥 المجموعة: {group_id} (النمط {style}, {timezone})", callback_data=f"style_{group_id}")])
-    
-    keyboard.append([InlineKeyboardButton("🔙 العودة", callback_data="back_to_main")])
+    for group_id, group_data in groups.items():
+        style = group_data.get("message_style", 1)
+        timezone = group_data.get("timezone", "UTC")
+        keyboard.append([InlineKeyboardButton(_(user_id, "group_style_button_format", group_id=group_id, style=style, timezone=timezone), callback_data=f"style_{group_id}")])
+    keyboard.append([InlineKeyboardButton(_(user_id, "back_button"), callback_data="back_to_main")])
     reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    await query.edit_message_text("اختر المجموعة لتعديل شكل الرسالة أو التوقيت: 👇", reply_markup=reply_markup)
-    
+    await query.edit_message_text(_(user_id, "select_group_for_style"), reply_markup=reply_markup)
     return MANAGE_MESSAGE_STYLE
 
 async def process_manage_message_style(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة إدارة شكل الرسالة"""
     query = update.callback_query
+    user_id = query.from_user.id
     await query.answer()
-    
     group_id = query.data.replace("style_", "")
     context.user_data["style_group_id"] = group_id
-    
-    style1 = "🔐 2FA Verification Code\n\nNext code at: HH:MM:SS AM/PM"
-    style2 = "🔐 2FA Verification Code\n\nNext code in: X minutes\n\nNext code at: HH:MM:SS AM/PM"
-    style3 = "🔐 2FA Verification Code\nNext code in: X minutes\nCorrect Time: HH:MM:SS AM/PM\nNext Code at: HH:MM:SS AM/PM"
-    
+    # أمثلة الأنماط (يمكن جعلها قابلة للترجمة أيضاً إذا لزم الأمر)
+    style1_example = "🔐 2FA Verification Code\n\nNext code at: HH:MM:SS AM/PM"
+    style2_example = "🔐 2FA Verification Code\n\nNext code in: X minutes\n\nNext code at: HH:MM:SS AM/PM"
+    style3_example = "🔐 2FA Verification Code\nNext code in: X minutes\nCorrect Time: HH:MM:SS AM/PM\nNext Code at: HH:MM:SS AM/PM"
     keyboard = [
-        [InlineKeyboardButton("1️⃣ النمط الأول", callback_data="set_style_1")],
-        [InlineKeyboardButton("2️⃣ النمط الثاني", callback_data="set_style_2")],
-        [InlineKeyboardButton("3️⃣ النمط الثالث", callback_data="set_style_3")],
-        [InlineKeyboardButton("🌍 توقيت غرينتش (UTC)", callback_data="set_timezone_UTC")],
-        [InlineKeyboardButton("🇵🇸 توقيت غزة (Asia/Gaza)", callback_data="set_timezone_Asia/Gaza")],
-        [InlineKeyboardButton("🔙 العودة", callback_data="manage_message_style")]
+        [InlineKeyboardButton(_(user_id, "style1_button"), callback_data="set_style_1")],
+        [InlineKeyboardButton(_(user_id, "style2_button"), callback_data="set_style_2")],
+        [InlineKeyboardButton(_(user_id, "style3_button"), callback_data="set_style_3")],
+        [InlineKeyboardButton(_(user_id, "timezone_utc_button"), callback_data="set_timezone_UTC")],
+        [InlineKeyboardButton(_(user_id, "timezone_gaza_button"), callback_data="set_timezone_Asia/Gaza")],
+        [InlineKeyboardButton(_(user_id, "back_button"), callback_data="manage_message_style")]
     ]
-    
     reply_markup = InlineKeyboardMarkup(keyboard)
-    
     config = load_config()
-    current_style = config["groups"][group_id].get("message_style", 1)
-    current_timezone = config["groups"][group_id].get("timezone", "UTC")
-    
+    current_style = config.get("groups", {}).get(group_id, {}).get("message_style", 1)
+    current_timezone = config.get("groups", {}).get(group_id, {}).get("timezone", "UTC")
     await query.edit_message_text(
-        f"👥 المجموعة: {group_id}\n"
-        f"🎨 النمط الحالي: {current_style}\n"
-        f"⏰ التوقيت الحالي: {current_timezone}\n\n"
-        f"1️⃣ النمط الأول:\n{style1}\n\n"
-        f"2️⃣ النمط الثاني:\n{style2}\n\n"
-        f"3️⃣ النمط الثالث:\n{style3}\n\n"
-        "اختر النمط أو التوقيت الجديد: 👇",
+        _(user_id, "select_new_style_prompt", group_id=group_id, style=current_style, timezone=current_timezone, style1_example=style1_example, style2_example=style2_example, style3_example=style3_example),
         reply_markup=reply_markup
     )
-    
     return MANAGE_MESSAGE_STYLE
 
 async def set_message_style(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """تعيين شكل الرسالة أو التوقيت"""
     query = update.callback_query
+    user_id = query.from_user.id
     await query.answer()
-    
     group_id = context.user_data.get("style_group_id")
+    if not group_id:
+        await query.edit_message_text(_(user_id, "generic_error"))
+        return await admin_command(update, context)
+        
     config = load_config()
     message = ""
+    style_changed = False
     
     if query.data.startswith("set_style_"):
-        style = int(query.data.replace("set_style_", ""))
-        if group_id in config["groups"]:
-            config["groups"][group_id]["message_style"] = style
-            save_config(config)
-        message = f"تم تعيين نمط الرسالة للمجموعة {group_id} إلى النمط {style} بنجاح! ✅"
-        
+        try:
+            style = int(query.data.replace("set_style_", ""))
+            if "groups" in config and group_id in config["groups"]:
+                config["groups"][group_id]["message_style"] = style
+                save_config(config)
+                message = _(user_id, "set_style_success", group_id=group_id, style=style)
+                style_changed = True
+            else: message = _(user_id, "group_not_found", group_id=group_id)
+        except ValueError: message = _(user_id, "invalid_style_selection")
+             
     elif query.data.startswith("set_timezone_"):
         timezone = query.data.replace("set_timezone_", "")
-        if group_id in config["groups"]:
+        try: tz.gettz(timezone)
+        except Exception:
+             keyboard = [[InlineKeyboardButton(_(user_id, "back_to_manage_style_button"), callback_data="manage_message_style")]]
+             reply_markup = InlineKeyboardMarkup(keyboard)
+             await query.edit_message_text(_(user_id, "invalid_timezone", timezone=timezone), reply_markup=reply_markup)
+             return MANAGE_MESSAGE_STYLE
+             
+        if "groups" in config and group_id in config["groups"]:
             config["groups"][group_id]["timezone"] = timezone
             save_config(config)
-        timezone_name = "غرينتش (UTC)" if timezone == "UTC" else "غزة (Asia/Gaza)"
-        message = f"تم تعيين توقيت الرسالة للمجموعة {group_id} إلى توقيت {timezone_name} بنجاح! ✅"
-    
-    keyboard = [
-        [InlineKeyboardButton("🔙 العودة إلى إدارة شكل الرسالة", callback_data="manage_message_style")],
-        [InlineKeyboardButton("🏠 العودة إلى القائمة الرئيسية", callback_data="back_to_main")]
-    ]
-    
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await query.edit_message_text(message, reply_markup=reply_markup)
-    
-    return MAIN_MENU
+            message = _(user_id, "set_timezone_success", group_id=group_id, timezone=timezone)
+            style_changed = True
+        else: message = _(user_id, "group_not_found", group_id=group_id)
+    else: message = _(user_id, "invalid_selection")
 
-# وظائف إدارة محاولات المستخدمين
+    if style_changed:
+        context.user_data.pop("style_group_id", None)
+        keyboard = [
+            [InlineKeyboardButton(_(user_id, "back_to_manage_style_button"), callback_data="manage_message_style")],
+            [InlineKeyboardButton(_(user_id, "back_to_main_button"), callback_data="back_to_main")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.edit_message_text(message, reply_markup=reply_markup)
+        return MAIN_MENU
+    else:
+        keyboard = [[InlineKeyboardButton(_(user_id, "back_to_manage_style_button"), callback_data="manage_message_style")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.edit_message_text(message, reply_markup=reply_markup)
+        return MANAGE_MESSAGE_STYLE
+
+# --- وظائف إدارة محاولات المستخدمين (مع الترجمة) ---
 async def manage_user_attempts(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """إدارة محاولات المستخدمين"""
     query = update.callback_query
+    user_id = query.from_user.id
     await query.answer()
     
     keyboard = [
-        [InlineKeyboardButton("📋 حدد عدد مرات النسخ", callback_data="select_group_for_user")],
-        [InlineKeyboardButton("🔙 العودة", callback_data="back_to_main")]
+        [InlineKeyboardButton(_(user_id, "edit_user_attempts_button"), callback_data="select_group_for_user")],
+        [InlineKeyboardButton(_(user_id, "set_group_default_attempts_button"), callback_data="select_group_default_attempts")],
+        [InlineKeyboardButton(_(user_id, "back_button"), callback_data="back_to_main")]
     ]
     
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await query.edit_message_text("إدارة محاولات المستخدمين: 👇", reply_markup=reply_markup)
+    await query.edit_message_text(_(user_id, "manage_user_attempts_menu_title"), reply_markup=reply_markup)
     
     return MANAGE_USER_ATTEMPTS
 
-async def select_group_for_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """اختيار المجموعة لإدارة المستخدمين"""
+# --- تحديد العدد الافتراضي للمحاولات لمجموعة (مع الترجمة) --- 
+async def select_group_for_default_attempts(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    user_id = query.from_user.id
     await query.answer()
     
     config = load_config()
     groups = config.get("groups", {})
     
     if not groups:
-        keyboard = [[InlineKeyboardButton("🔙 العودة", callback_data="manage_user_attempts")]]
+        keyboard = [[InlineKeyboardButton(_(user_id, "back_button"), callback_data="manage_user_attempts")]]
         reply_markup = InlineKeyboardMarkup(keyboard)
-        await query.edit_message_text("لا توجد مجموعات مضافة حالياً. 🤷‍♂️", reply_markup=reply_markup)
+        await query.edit_message_text(_(user_id, "no_groups_for_default_attempts"), reply_markup=reply_markup)
+        return MANAGE_USER_ATTEMPTS
+    
+    keyboard = []
+    for group_id, group_data in groups.items():
+        default_attempts = group_data.get("default_attempts", 5)
+        keyboard.append([InlineKeyboardButton(_(user_id, "group_default_attempts_button_format", group_id=group_id, default_attempts=default_attempts), callback_data=f"set_default_attempts_{group_id}")])
+    
+    keyboard.append([InlineKeyboardButton(_(user_id, "back_button"), callback_data="manage_user_attempts")])
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(_(user_id, "select_group_for_default_attempts"), reply_markup=reply_markup)
+    
+    return SELECT_GROUP_FOR_DEFAULT_ATTEMPTS
+
+async def request_new_default_attempts(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user_id = query.from_user.id
+    await query.answer()
+    
+    group_id = query.data.replace("set_default_attempts_", "")
+    context.user_data["default_attempts_group_id"] = group_id
+    
+    config = load_config()
+    current_default = config.get("groups", {}).get(group_id, {}).get("default_attempts", 5)
+    
+    await query.edit_message_text(_(user_id, "request_new_default_attempts_prompt", group_id=group_id, current_default=current_default))
+    
+    return SET_DEFAULT_ATTEMPTS
+
+async def process_set_default_attempts(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    try:
+        new_default_attempts = int(update.message.text.strip())
+        if new_default_attempts < 0: raise ValueError("Must be >= 0")
+    except ValueError:
+        await update.message.reply_text(_(user_id, "invalid_default_attempts_input"))
+        return SET_DEFAULT_ATTEMPTS
+    
+    group_id = context.user_data.get("default_attempts_group_id")
+    
+    if not group_id:
+        await update.message.reply_text(_(user_id, "generic_error"))
+        return ConversationHandler.END
+        
+    config = load_config()
+    message = ""
+    
+    if "groups" in config and group_id in config["groups"]:
+        config["groups"][group_id]["default_attempts"] = new_default_attempts
+        save_config(config)
+        message = _(user_id, "set_default_attempts_success", group_id=group_id, new_default_attempts=new_default_attempts)
+    else: message = _(user_id, "group_not_found", group_id=group_id)
+    
+    await update.message.reply_text(message)
+    await asyncio.sleep(1)
+    
+    context.user_data.pop("default_attempts_group_id", None)
+    
+    keyboard = [[InlineKeyboardButton(_(user_id, "back_to_select_group_default_attempts_button"), callback_data="select_group_default_attempts")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text(_(user_id, "press_to_go_back"), reply_markup=reply_markup)
+    
+    return SELECT_GROUP_FOR_DEFAULT_ATTEMPTS
+
+# --- تعديل محاولات مستخدم معين (مع الترجمة) ---
+async def select_group_for_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user_id = query.from_user.id
+    await query.answer()
+    config = load_config()
+    groups = config.get("groups", {})
+    if not groups:
+        keyboard = [[InlineKeyboardButton(_(user_id, "back_button"), callback_data="manage_user_attempts")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.edit_message_text(_(user_id, "no_groups_for_user_attempts"), reply_markup=reply_markup)
         return MANAGE_USER_ATTEMPTS
     
     keyboard = []
     for group_id in groups:
-        keyboard.append([InlineKeyboardButton(f"👥 المجموعة: {group_id}", callback_data=f"select_users_{group_id}")])
-    
-    keyboard.append([InlineKeyboardButton("🔙 العودة", callback_data="manage_user_attempts")])
+        keyboard.append([InlineKeyboardButton(_(user_id, "group_button_format", group_id=group_id), callback_data=f"select_users_{group_id}")])
+    keyboard.append([InlineKeyboardButton(_(user_id, "back_button"), callback_data="manage_user_attempts")])
     reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    await query.edit_message_text("اختر المجموعة لإدارة المستخدمين: 👇", reply_markup=reply_markup)
-    
+    await query.edit_message_text(_(user_id, "select_group_for_user_attempts"), reply_markup=reply_markup)
     return SELECT_GROUP_FOR_USER
 
 async def select_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """اختيار المستخدم لإدارة المحاولات"""
     query = update.callback_query
+    user_id = query.from_user.id
     await query.answer()
-    
     group_id = query.data.replace("select_users_", "")
     context.user_data["attempts_group_id"] = group_id
-    
     users = load_users()
     group_users = {}
-    for user_id, user_data in users.items():
+    for user_id_str, user_data in users.items():
         if "attempts" in user_data and group_id in user_data["attempts"]:
-            group_users[user_id] = user_data
+            group_users[user_id_str] = user_data
     
     if not group_users:
-        keyboard = [[InlineKeyboardButton("🔙 العودة", callback_data="select_group_for_user")]]
+        keyboard = [[InlineKeyboardButton(_(user_id, "back_to_select_group_for_user_button"), callback_data="select_group_for_user")]]
         reply_markup = InlineKeyboardMarkup(keyboard)
-        await query.edit_message_text("لا يوجد مستخدمون في هذه المجموعة حالياً. 🤷‍♂️", reply_markup=reply_markup)
+        await query.edit_message_text(_(user_id, "no_users_in_group"), reply_markup=reply_markup)
         return SELECT_GROUP_FOR_USER
     
     keyboard = []
-    for user_id, user_data in group_users.items():
+    for user_id_str, user_data in group_users.items():
         remaining = user_data["attempts"][group_id]["remaining"]
+        username = user_data.get("username", f"ID: {user_id_str}")
         keyboard.append([InlineKeyboardButton(
-            f"👤 المستخدم: {user_id} (المحاولات: {remaining})",
-            callback_data=f"manage_user_{user_id}"
+            _(user_id, "user_attempts_button_format", username=username, remaining=remaining),
+            callback_data=f"manage_user_{user_id_str}"
         )])
-    
-    keyboard.append([InlineKeyboardButton("🔙 العودة", callback_data="select_group_for_user")])
+    keyboard.append([InlineKeyboardButton(_(user_id, "back_to_select_group_for_user_button"), callback_data="select_group_for_user")])
     reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    await query.edit_message_text("اختر المستخدم لإدارة المحاولات: 👇", reply_markup=reply_markup)
-    
+    await query.edit_message_text(_(user_id, "select_user_for_attempts"), reply_markup=reply_markup)
     return SELECT_USER
 
 async def manage_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """إدارة محاولات المستخدم"""
     query = update.callback_query
+    admin_user_id = query.from_user.id
     await query.answer()
-    
-    user_id = query.data.replace("manage_user_", "")
-    context.user_data["attempts_user_id"] = user_id
-    
+    target_user_id = query.data.replace("manage_user_", "")
+    context.user_data["attempts_user_id"] = target_user_id
     group_id = context.user_data.get("attempts_group_id")
     users = load_users()
     
-    if user_id in users and "attempts" in users[user_id] and group_id in users[user_id]["attempts"]:
-        remaining = users[user_id]["attempts"][group_id]["remaining"]
-        reset_date = users[user_id]["attempts"][group_id]["reset_date"]
-        banned = users[user_id].get("banned", False)
-        
-        status = "محظور 🚫" if banned else "نشط ✅"
-        ban_button_text = "✅ إلغاء حظر المستخدم" if banned else "🚫 حظر المستخدم"
-        
+    if target_user_id in users and "attempts" in users[target_user_id] and group_id in users[target_user_id]["attempts"]:
+        user_data = users[target_user_id]
+        group_attempts = user_data["attempts"][group_id]
+        remaining = group_attempts["remaining"]
+        reset_date = group_attempts["reset_date"]
+        banned = user_data.get("banned", False)
+        username = user_data.get("username", f"ID: {target_user_id}")
+        status = _(admin_user_id, "user_status_banned") if banned else _(admin_user_id, "user_status_active")
+        ban_button_text = _(admin_user_id, "unban_user_button") if banned else _(admin_user_id, "ban_user_button")
         keyboard = [
-            [InlineKeyboardButton("➕ إضافة محاولات", callback_data="add_attempts")],
-            [InlineKeyboardButton("➖ حذف محاولات", callback_data="remove_attempts")],
+            [InlineKeyboardButton(_(admin_user_id, "add_attempts_button"), callback_data="add_attempts")],
+            [InlineKeyboardButton(_(admin_user_id, "remove_attempts_button"), callback_data="remove_attempts")],
             [InlineKeyboardButton(ban_button_text, callback_data="toggle_ban")],
-            [InlineKeyboardButton("🔙 العودة", callback_data=f"select_users_{group_id}")]
+            [InlineKeyboardButton(_(admin_user_id, "back_to_select_user_button"), callback_data=f"select_users_{group_id}")]
         ]
-        
         reply_markup = InlineKeyboardMarkup(keyboard)
-        
         await query.edit_message_text(
-            f"👤 إدارة المستخدم: {user_id}\n"
-            f"👥 المجموعة: {group_id}\n"
-            f"🔢 المحاولات المتبقية: {remaining}\n"
-            f"📅 تاريخ إعادة التعيين: {reset_date}\n"
-            f"🚦 الحالة: {status}\n\n"
-            "اختر الإجراء: 👇",
+            _(admin_user_id, "manage_user_prompt", username=username, group_id=group_id, remaining=remaining, reset_date=reset_date, status=status),
             reply_markup=reply_markup
         )
-        
         return MANAGE_USER
     else:
-        keyboard = [[InlineKeyboardButton("🔙 العودة", callback_data=f"select_users_{group_id}")]]
+        keyboard = [[InlineKeyboardButton(_(admin_user_id, "back_to_select_user_button"), callback_data=f"select_users_{group_id}")]]
         reply_markup = InlineKeyboardMarkup(keyboard)
-        await query.edit_message_text("لم يتم العثور على بيانات المستخدم. 🤷‍♂️", reply_markup=reply_markup)
+        await query.edit_message_text(_(admin_user_id, "user_data_not_found"), reply_markup=reply_markup)
         return SELECT_USER
 
 async def toggle_ban(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """تبديل حالة حظر المستخدم"""
     query = update.callback_query
+    admin_user_id = query.from_user.id
     await query.answer()
-    
-    user_id = context.user_data.get("attempts_user_id")
+    target_user_id = context.user_data.get("attempts_user_id")
     group_id = context.user_data.get("attempts_group_id")
-    
+    if not target_user_id or not group_id:
+        await query.edit_message_text(_(admin_user_id, "generic_error"))
+        return await admin_command(update, context)
+        
     users = load_users()
     message = ""
-    
-    if user_id in users:
-        current_ban = users[user_id].get("banned", False)
-        users[user_id]["banned"] = not current_ban
+    if target_user_id in users:
+        current_ban = users[target_user_id].get("banned", False)
+        users[target_user_id]["banned"] = not current_ban
         save_users(users)
-        
-        status = "محظور 🚫" if not current_ban else "نشط ✅"
-        action = "حظر" if not current_ban else "إلغاء حظر"
-        message = f"تم {action} المستخدم {user_id} بنجاح! الحالة الآن: {status}"
-    else:
-        message = f"لم يتم العثور على المستخدم {user_id}. 🤷‍♂️"
+        username = users[target_user_id].get("username", target_user_id)
+        message = _(admin_user_id, "user_banned_message", username=username, user_id=target_user_id) if not current_ban else _(admin_user_id, "user_unbanned_message", username=username, user_id=target_user_id)
+    else: message = _(admin_user_id, "user_not_found", user_id=target_user_id)
     
-    keyboard = [
-        [InlineKeyboardButton("🔙 العودة إلى إدارة المستخدم", callback_data=f"manage_user_{user_id}")],
-        [InlineKeyboardButton("🏠 العودة إلى اختيار المستخدمين", callback_data=f"select_users_{group_id}")]
-    ]
-    
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await query.edit_message_text(message, reply_markup=reply_markup)
-    
-    # العودة إلى شاشة إدارة المستخدم لعرض الحالة المحدثة
-    # استدعاء manage_user مرة أخرى لتحديث الواجهة
-    # نحتاج إلى تمرير query معدل أو إعادة بناء السياق
-    # الطريقة الأسهل هي إعادة توجيه المستخدم
-    # لكن بما أننا في نفس الحالة، يمكننا تحديث الرسالة مباشرة
-    # ونترك المستخدم يضغط على زر العودة إذا أراد
-    return MANAGE_USER # البقاء في نفس الحالة لتحديث الواجهة
+    await query.edit_message_text(message)
+    await asyncio.sleep(1)
+    query.data = f"manage_user_{target_user_id}" 
+    return await manage_user(update, context)
 
 async def add_attempts(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """إضافة محاولات للمستخدم"""
     query = update.callback_query
+    admin_user_id = query.from_user.id
     await query.answer()
-    
-    user_id = context.user_data.get("attempts_user_id")
-    
-    await query.edit_message_text(
-        f"يرجى إدخال عدد المحاولات التي تريد إضافتها للمستخدم {user_id}: ➕🔢"
-    )
-    
+    target_user_id = context.user_data.get("attempts_user_id")
+    users = load_users()
+    username = users.get(target_user_id, {}).get("username", target_user_id)
+    await query.edit_message_text(_(admin_user_id, "add_attempts_prompt", username=username, user_id=target_user_id))
     return ADD_ATTEMPTS
 
 async def process_add_attempts(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة إضافة المحاولات"""
+    admin_user_id = update.effective_user.id
     try:
-        attempts = int(update.message.text.strip())
-        if attempts <= 0:
-            raise ValueError("يجب أن يكون العدد موجباً")
+        attempts_to_add = int(update.message.text.strip())
+        if attempts_to_add <= 0: raise ValueError("Must be positive")
     except ValueError:
-        await update.message.reply_text(
-            "يرجى إدخال عدد صحيح موجب: ❌🔢"
-        )
+        await update.message.reply_text(_(admin_user_id, "invalid_positive_integer"))
         return ADD_ATTEMPTS
     
-    user_id = context.user_data.get("attempts_user_id")
+    target_user_id = context.user_data.get("attempts_user_id")
     group_id = context.user_data.get("attempts_group_id")
-    
+    if not target_user_id or not group_id:
+        await update.message.reply_text(_(admin_user_id, "generic_error"))
+        return ConversationHandler.END
+        
     users = load_users()
-    
-    if user_id not in users:
-        users[user_id] = {"attempts": {}, "banned": False}
-    if "attempts" not in users[user_id]:
-        users[user_id]["attempts"] = {}
-    if group_id not in users[user_id]["attempts"]:
-        today = datetime.datetime.now().strftime("%Y-%m-%d")
-        users[user_id]["attempts"][group_id] = {"remaining": 0, "reset_date": today}
-    
-    users[user_id]["attempts"][group_id]["remaining"] += attempts
+    message = ""
+    today = datetime.date.today().isoformat()
+    if target_user_id not in users: users[target_user_id] = {"attempts": {}, "banned": False, "username": "Unknown", "language": DEFAULT_LANG}
+    if "attempts" not in users[target_user_id]: users[target_user_id]["attempts"] = {}
+    if group_id not in users[target_user_id]["attempts"]:
+        config = load_config()
+        default_attempts = config.get("groups", {}).get(group_id, {}).get("default_attempts", 5)
+        users[target_user_id]["attempts"][group_id] = {"remaining": 0, "reset_date": today}
+        
+    users[target_user_id]["attempts"][group_id]["remaining"] += attempts_to_add
+    users[target_user_id]["attempts"][group_id]["reset_date"] = today
     save_users(users)
+    username = users[target_user_id].get("username", target_user_id)
+    new_total = users[target_user_id]["attempts"][group_id]["remaining"]
+    message = _(admin_user_id, "add_attempts_success", added_count=attempts_to_add, username=username, user_id=target_user_id, new_total=new_total)
     
-    keyboard = [
-        [InlineKeyboardButton("🔙 العودة إلى إدارة المستخدم", callback_data=f"manage_user_{user_id}")],
-        [InlineKeyboardButton("🏠 العودة إلى اختيار المستخدمين", callback_data=f"select_users_{group_id}")]
-    ]
-    
+    await update.message.reply_text(message)
+    await asyncio.sleep(1)
+    keyboard = [[InlineKeyboardButton(_(admin_user_id, "back_to_manage_user_button"), callback_data=f"manage_user_{target_user_id}")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text(
-        f"تم إضافة {attempts} محاولات للمستخدم {user_id} بنجاح! ✅",
-        reply_markup=reply_markup
-    )
-    
+    await update.message.reply_text(_(admin_user_id, "press_to_go_back"), reply_markup=reply_markup)
     return MANAGE_USER
 
 async def remove_attempts(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """حذف محاولات من المستخدم"""
     query = update.callback_query
+    admin_user_id = query.from_user.id
     await query.answer()
-    
-    user_id = context.user_data.get("attempts_user_id")
-    
-    await query.edit_message_text(
-        f"يرجى إدخال عدد المحاولات التي تريد حذفها من المستخدم {user_id}: ➖🔢"
-    )
-    
+    target_user_id = context.user_data.get("attempts_user_id")
+    users = load_users()
+    username = users.get(target_user_id, {}).get("username", target_user_id)
+    await query.edit_message_text(_(admin_user_id, "remove_attempts_prompt", username=username, user_id=target_user_id))
     return REMOVE_ATTEMPTS
 
 async def process_remove_attempts(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة حذف المحاولات"""
+    admin_user_id = update.effective_user.id
     try:
-        attempts = int(update.message.text.strip())
-        if attempts <= 0:
-            raise ValueError("يجب أن يكون العدد موجباً")
+        attempts_to_remove = int(update.message.text.strip())
+        if attempts_to_remove <= 0: raise ValueError("Must be positive")
     except ValueError:
-        await update.message.reply_text(
-            "يرجى إدخال عدد صحيح موجب: ❌🔢"
-        )
+        await update.message.reply_text(_(admin_user_id, "invalid_positive_integer"))
         return REMOVE_ATTEMPTS
     
-    user_id = context.user_data.get("attempts_user_id")
+    target_user_id = context.user_data.get("attempts_user_id")
     group_id = context.user_data.get("attempts_group_id")
-    
+    if not target_user_id or not group_id:
+        await update.message.reply_text(_(admin_user_id, "generic_error"))
+        return ConversationHandler.END
+        
     users = load_users()
     message = ""
-    
-    if (user_id in users and "attempts" in users[user_id] and 
-            group_id in users[user_id]["attempts"]):
-        
-        current = users[user_id]["attempts"][group_id]["remaining"]
-        removed_count = min(attempts, current)
-        users[user_id]["attempts"][group_id]["remaining"] = max(0, current - attempts)
+    today = datetime.date.today().isoformat()
+    if (target_user_id in users and "attempts" in users[target_user_id] and group_id in users[target_user_id]["attempts"]):
+        current = users[target_user_id]["attempts"][group_id]["remaining"]
+        removed_count = min(attempts_to_remove, current)
+        users[target_user_id]["attempts"][group_id]["remaining"] = max(0, current - attempts_to_remove)
+        users[target_user_id]["attempts"][group_id]["reset_date"] = today
         save_users(users)
-        
-        message = f"تم حذف {removed_count} محاولات من المستخدم {user_id} بنجاح! ✅"
-    else:
-        message = f"لم يتم العثور على بيانات المحاولات للمستخدم {user_id}. 🤷‍♂️"
+        username = users[target_user_id].get("username", target_user_id)
+        new_total = users[target_user_id]["attempts"][group_id]["remaining"]
+        message = _(admin_user_id, "remove_attempts_success", removed_count=removed_count, username=username, user_id=target_user_id, new_total=new_total)
+    else: message = _(admin_user_id, "user_attempts_not_found", user_id=target_user_id, group_id=group_id)
     
-    keyboard = [
-        [InlineKeyboardButton("🔙 العودة إلى إدارة المستخدم", callback_data=f"manage_user_{user_id}")],
-        [InlineKeyboardButton("🏠 العودة إلى اختيار المستخدمين", callback_data=f"select_users_{group_id}")]
-    ]
-    
+    await update.message.reply_text(message)
+    await asyncio.sleep(1)
+    keyboard = [[InlineKeyboardButton(_(admin_user_id, "back_to_manage_user_button"), callback_data=f"manage_user_{target_user_id}")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text(message, reply_markup=reply_markup)
-    
+    await update.message.reply_text(_(admin_user_id, "press_to_go_back"), reply_markup=reply_markup)
     return MANAGE_USER
 
-# وظائف إدارة المسؤولين
+# --- وظائف إدارة المسؤولين (مع الترجمة والتأكيد) ---
 async def manage_admins(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """إدارة المسؤولين"""
     query = update.callback_query
+    user_id = query.from_user.id
     await query.answer()
-    
     keyboard = [
-        [InlineKeyboardButton("➕👮 إضافة مسؤول", callback_data="add_admin")],
-        [InlineKeyboardButton("➖👮 إزالة مسؤول", callback_data="remove_admin")],
-        [InlineKeyboardButton("🔙 العودة", callback_data="back_to_main")]
+        [InlineKeyboardButton(_(user_id, "add_admin_button"), callback_data="add_admin")],
+        [InlineKeyboardButton(_(user_id, "remove_admin_button"), callback_data="remove_admin")],
+        [InlineKeyboardButton(_(user_id, "back_button"), callback_data="back_to_main")]
     ]
-    
     reply_markup = InlineKeyboardMarkup(keyboard)
-    
     config = load_config()
     admins = config.get("admins", [ADMIN_ID])
-    admins_text = "\n".join([f"- 👮 {admin}" for admin in admins])
-    
+    admins_text = ""
+    users = load_users()
+    for admin_id in admins:
+        admin_id_str = str(admin_id)
+        username = users.get(admin_id_str, {}).get("username", f"ID: {admin_id}")
+        is_main_admin = _(user_id, "admin_list_main_suffix") if admin_id == ADMIN_ID else ""
+        admins_text += _(user_id, "admin_list_item_format", username=username, is_main=is_main_admin) + "\n"
+    if not admins_text: admins_text = _(user_id, "no_admins_found")
     await query.edit_message_text(
-        "إدارة المسؤولين 👮\n\n"
-        f"المسؤولون الحاليون:\n{admins_text}\n\n"
-        "اختر الإجراء: 👇",
+        _(user_id, "manage_admins_menu_title", admins_list=admins_text.strip()),
         reply_markup=reply_markup
     )
-    
     return MANAGE_ADMINS
 
+# --- إضافة مسؤول (مع الترجمة والتأكيد) ---
 async def add_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """إضافة مسؤول جديد"""
     query = update.callback_query
+    user_id = query.from_user.id
     await query.answer()
-    
-    await query.edit_message_text(
-        "يرجى إدخال معرف المستخدم (User ID) للمسؤول الجديد: 🆔👮"
-    )
-    
+    await query.edit_message_text(_(user_id, "add_admin_prompt"))
     return ADD_ADMIN
 
 async def process_add_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة إضافة المسؤول"""
-    try:
-        admin_id = int(update.message.text.strip())
+    user_id = update.effective_user.id
+    try: admin_id_to_add = int(update.message.text.strip())
     except ValueError:
-        await update.message.reply_text(
-            "يرجى إدخال معرف مستخدم صالح (أرقام فقط): ❌🆔"
-        )
+        await update.message.reply_text(_(user_id, "invalid_user_id"))
         return ADD_ADMIN
     
     config = load_config()
-    message = ""
-    
-    if admin_id in config["admins"]:
-        message = f"المستخدم {admin_id} مسؤول بالفعل. ✅👮"
-    else:
-        config["admins"].append(admin_id)
-        save_config(config)
-        message = f"تم إضافة المستخدم {admin_id} كمسؤول بنجاح! 🎉👮"
-    
-    keyboard = [
-        [InlineKeyboardButton("🔙 العودة إلى إدارة المسؤولين", callback_data="manage_admins")],
-        [InlineKeyboardButton("🏠 العودة إلى القائمة الرئيسية", callback_data="back_to_main")]
-    ]
-    
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text(message, reply_markup=reply_markup)
-    
-    return MAIN_MENU
-
-async def remove_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """إزالة مسؤول"""
-    query = update.callback_query
-    await query.answer()
-    
-    config = load_config()
-    admins = config.get("admins", [ADMIN_ID])
-    
-    # التأكد من وجود مسؤولين آخرين غير المسؤول الرئيسي
-    removable_admins = [admin for admin in admins if admin != ADMIN_ID]
-    
-    if not removable_admins:
-        keyboard = [[InlineKeyboardButton("🔙 العودة", callback_data="manage_admins")]]
+    admins_list = config.get("admins", [])
+    if not isinstance(admins_list, list): admins_list = [ADMIN_ID]
+        
+    if admin_id_to_add in admins_list:
+        await update.message.reply_text(_(user_id, "user_already_admin", admin_id=admin_id_to_add))
+        keyboard = [[InlineKeyboardButton(_(user_id, "back_to_manage_admins_button"), callback_data="manage_admins")]]
         reply_markup = InlineKeyboardMarkup(keyboard)
-        await query.edit_message_text(
-            "لا يمكن إزالة المسؤول الرئيسي أو لا يوجد مسؤولون آخرون لإزالتهم. 🤷‍♂️",
+        await update.message.reply_text(_(user_id, "press_to_go_back"), reply_markup=reply_markup)
+        return MANAGE_ADMINS
+    else:
+        context.user_data["add_admin_id"] = admin_id_to_add
+        keyboard = [
+            [InlineKeyboardButton(_(user_id, "confirm_add_admin_yes"), callback_data="confirm_add_admin_yes")],
+            [InlineKeyboardButton(_(user_id, "confirm_add_admin_no"), callback_data="manage_admins")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        username_info = ""
+        try:
+            chat = await context.bot.get_chat(admin_id_to_add)
+            if chat.username: username_info = f" (@{chat.username})"
+            elif chat.first_name: username_info = f" ({chat.first_name})"
+        except Exception as e: logger.warning(f"لم نتمكن من جلب معلومات المستخدم {admin_id_to_add}: {e}")
+        await update.message.reply_text(
+            _(user_id, "confirm_add_admin_prompt", admin_id=admin_id_to_add, username_info=username_info),
             reply_markup=reply_markup
         )
+        return CONFIRM_ADD_ADMIN
+
+async def execute_add_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user_id = query.from_user.id
+    await query.answer()
+    admin_id_to_add = context.user_data.get("add_admin_id")
+    if not admin_id_to_add:
+        await query.edit_message_text(_(user_id, "generic_error"))
+        return await admin_command(update, context)
+        
+    config = load_config()
+    if "admins" not in config or not isinstance(config["admins"], list): config["admins"] = [ADMIN_ID]
+    message = ""
+    if admin_id_to_add in config["admins"]:
+        message = _(user_id, "user_already_admin", admin_id=admin_id_to_add)
+    else:
+        config["admins"].append(admin_id_to_add)
+        save_config(config)
+        message = _(user_id, "add_admin_success", admin_id=admin_id_to_add)
+    
+    keyboard = [
+        [InlineKeyboardButton(_(user_id, "back_to_manage_admins_button"), callback_data="manage_admins")],
+        [InlineKeyboardButton(_(user_id, "back_to_main_button"), callback_data="back_to_main")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.edit_message_text(message, reply_markup=reply_markup)
+    context.user_data.pop("add_admin_id", None)
+    return MAIN_MENU
+
+# --- إزالة مسؤول (مع الترجمة والتأكيد) ---
+async def remove_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user_id = query.from_user.id
+    await query.answer()
+    config = load_config()
+    admins = config.get("admins", [ADMIN_ID])
+    removable_admins = [admin for admin in admins if admin != ADMIN_ID]
+    if not removable_admins:
+        keyboard = [[InlineKeyboardButton(_(user_id, "back_button"), callback_data="manage_admins")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.edit_message_text(_(user_id, "cannot_remove_main_admin"), reply_markup=reply_markup)
         return MANAGE_ADMINS
     
     keyboard = []
-    for admin in removable_admins:
-        keyboard.append([InlineKeyboardButton(f"👮 المسؤول: {admin}", callback_data=f"del_admin_{admin}")])
-    
-    keyboard.append([InlineKeyboardButton("🔙 العودة", callback_data="manage_admins")])
+    users = load_users()
+    for admin_id in removable_admins:
+        admin_id_str = str(admin_id)
+        username = users.get(admin_id_str, {}).get("username", f"ID: {admin_id}")
+        keyboard.append([InlineKeyboardButton(_(user_id, "admin_remove_button_format", username=username), callback_data=f"confirm_del_admin_{admin_id}")])
+    keyboard.append([InlineKeyboardButton(_(user_id, "back_button"), callback_data="manage_admins")])
     reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    await query.edit_message_text("اختر المسؤول الذي تريد إزالته: 👇", reply_markup=reply_markup)
-    
+    await query.edit_message_text(_(user_id, "select_admin_to_remove"), reply_markup=reply_markup)
     return REMOVE_ADMIN
 
-async def process_remove_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة إزالة المسؤول"""
+async def confirm_remove_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    user_id = query.from_user.id
     await query.answer()
-    
-    admin_id = int(query.data.replace("del_admin_", ""))
-    
+    try: admin_id_to_remove = int(query.data.replace("confirm_del_admin_", ""))
+    except ValueError:
+        keyboard = [[InlineKeyboardButton(_(user_id, "back_to_manage_admins_button"), callback_data="manage_admins")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.edit_message_text(_(user_id, "invalid_selection"), reply_markup=reply_markup)
+        return MANAGE_ADMINS
+        
+    context.user_data["remove_admin_id"] = admin_id_to_remove
+    keyboard = [
+        [InlineKeyboardButton(_(user_id, "confirm_remove_admin_yes"), callback_data="execute_del_admin_yes")],
+        [InlineKeyboardButton(_(user_id, "confirm_remove_admin_no"), callback_data="manage_admins")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    username_info = ""
+    try:
+        chat = await context.bot.get_chat(admin_id_to_remove)
+        if chat.username: username_info = f" (@{chat.username})"
+        elif chat.first_name: username_info = f" ({chat.first_name})"
+    except Exception as e: logger.warning(f"لم نتمكن من جلب معلومات المستخدم {admin_id_to_remove}: {e}")
+    await query.edit_message_text(
+        _(user_id, "confirm_remove_admin_prompt", admin_id=admin_id_to_remove, username_info=username_info),
+        reply_markup=reply_markup
+    )
+    return CONFIRM_REMOVE_ADMIN
+
+async def execute_remove_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user_id = query.from_user.id
+    await query.answer()
+    admin_id_to_remove = context.user_data.get("remove_admin_id")
+    if not admin_id_to_remove:
+        await query.edit_message_text(_(user_id, "generic_error"))
+        return await admin_command(update, context)
+        
     config = load_config()
     message = ""
-    
-    if admin_id == ADMIN_ID:
-        message = "لا يمكن إزالة المسؤول الرئيسي. 🚫"
-    elif admin_id in config["admins"]:
-        config["admins"].remove(admin_id)
+    if admin_id_to_remove == ADMIN_ID:
+        message = _(user_id, "cannot_remove_main_admin_error")
+    elif "admins" in config and isinstance(config["admins"], list) and admin_id_to_remove in config["admins"]:
+        config["admins"].remove(admin_id_to_remove)
         save_config(config)
-        message = f"تم إزالة المسؤول {admin_id} بنجاح! ✅👮"
-    else:
-        message = f"المستخدم {admin_id} ليس مسؤولاً. 🤷‍♂️"
+        message = _(user_id, "remove_admin_success", admin_id=admin_id_to_remove)
+    else: message = _(user_id, "user_not_admin_or_removed", admin_id=admin_id_to_remove)
     
     keyboard = [
-        [InlineKeyboardButton("🔙 العودة إلى إدارة المسؤولين", callback_data="manage_admins")],
-        [InlineKeyboardButton("🏠 العودة إلى القائمة الرئيسية", callback_data="back_to_main")]
+        [InlineKeyboardButton(_(user_id, "back_to_manage_admins_button"), callback_data="manage_admins")],
+        [InlineKeyboardButton(_(user_id, "back_to_main_button"), callback_data="back_to_main")]
     ]
-    
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.edit_message_text(message, reply_markup=reply_markup)
-    
+    context.user_data.pop("remove_admin_id", None)
     return MAIN_MENU
 
-# وظائف التنقل
-async def back_to_main(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """العودة إلى القائمة الرئيسية"""
+# --- وظائف إدارة اللغة --- 
+async def manage_language(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    user_id = query.from_user.id
     await query.answer()
     
-    keyboard = [
-        [InlineKeyboardButton("⚙️ إدارة المجموعات/TOTP_SECRET", callback_data="manage_groups")],
-        [InlineKeyboardButton("⏱️ إدارة فترة التكرار", callback_data="manage_interval")],
-        [InlineKeyboardButton("🎨 إدارة شكل/توقيت الرسالة", callback_data="manage_message_style")],
-        [InlineKeyboardButton("🔢 إدارة محاولات المستخدمين", callback_data="manage_user_attempts")],
-        [InlineKeyboardButton("👮 إدارة المسؤولين", callback_data="manage_admins")],
-        [InlineKeyboardButton("❌ إلغاء", callback_data="cancel")]
-    ]
-    
+    keyboard = []
+    available_langs = translations.keys()
+    # عرض اللغات المتاحة
+    for lang_code in available_langs:
+        # الحصول على اسم اللغة من ملف الترجمة نفسه (اختياري)
+        lang_name = translations.get(lang_code, {}).get(f"language_{lang_code}", lang_code)
+        keyboard.append([InlineKeyboardButton(lang_name, callback_data=f"set_lang_{lang_code}")])
+        
+    keyboard.append([InlineKeyboardButton(_(user_id, "back_button"), callback_data="back_to_main")])
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await query.edit_message_text("مرحباً بك في لوحة الإدارة. يرجى اختيار إحدى الخيارات: 👇", reply_markup=reply_markup)
     
-    return MAIN_MENU
+    await query.edit_message_text(_(user_id, "select_language_prompt"), reply_markup=reply_markup)
+    return SELECT_LANGUAGE
+
+async def set_language(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user_id = query.from_user.id
+    await query.answer()
+    
+    lang_code = query.data.replace("set_lang_", "")
+    
+    if lang_code in translations:
+        set_user_language(user_id, lang_code)
+        lang_name = translations.get(lang_code, {}).get(f"language_{lang_code}", lang_code)
+        await query.edit_message_text(_(user_id, "language_set_success", language_name=lang_name))
+        await asyncio.sleep(1.5) # إعطاء المستخدم وقتاً لقراءة الرسالة
+        # العودة إلى القائمة الرئيسية باللغة الجديدة
+        return await admin_command(update, context)
+    else:
+        await query.answer(_(user_id, "invalid_selection"), show_alert=True)
+        # البقاء في نفس القائمة
+        keyboard = []
+        available_langs = translations.keys()
+        for lc in available_langs:
+            ln = translations.get(lc, {}).get(f"language_{lc}", lc)
+            keyboard.append([InlineKeyboardButton(ln, callback_data=f"set_lang_{lc}")])
+        keyboard.append([InlineKeyboardButton(_(user_id, "back_button"), callback_data="back_to_main")])
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.edit_message_text(_(user_id, "select_language_prompt"), reply_markup=reply_markup)
+        return SELECT_LANGUAGE
+
+# --- وظائف التنقل والعودة (مع الترجمة) ---
+async def back_to_main(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if query: await query.answer()
+    return await admin_command(update, context)
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """إلغاء المحادثة"""
     query = update.callback_query
+    user_id = update.effective_user.id
+    message_text = _(user_id, "cancel_message")
     if query:
         await query.answer()
-        await query.edit_message_text("تم إلغاء العملية. 👍")
-    else:
-        await update.message.reply_text("تم إلغاء العملية. 👍")
-    
-    # مسح بيانات المستخدم المؤقتة إذا كانت موجودة
+        try: await query.edit_message_text(message_text)
+        except Exception as e: logger.info(f"لم نتمكن من تعديل الرسالة عند الإلغاء: {e}")
+    elif update.message: await update.message.reply_text(message_text)
     context.user_data.clear()
-    
     return ConversationHandler.END
 
-# وظائف المهام الدورية
+# --- وظائف المهام الدورية (مع الترجمة للرسائل) ---
 async def start_periodic_task(application, group_id):
-    """بدء مهمة دورية لإرسال رمز المصادقة"""
     config = load_config()
-    
-    if group_id not in config["groups"]:
-        logger.error(f"المجموعة {group_id} غير موجودة في الإعدادات")
-        return
-    
+    if group_id not in config.get("groups", {}): return
     await stop_periodic_task(application, group_id)
-    
-    stop_flags[group_id] = threading.Event()
-    
     interval = config["groups"][group_id].get("interval", 600)
-    if interval <= 0: # التأكد من أن الفاصل الزمني موجب
-        logger.warning(f"الفاصل الزمني للمجموعة {group_id} غير موجب ({interval}). لن يتم بدء المهمة الدورية.")
-        return
-        
-    thread = threading.Thread(
-        target=periodic_task_thread,
-        args=(application.bot, group_id, interval, stop_flags[group_id]),
-        daemon=True
-    )
+    if interval <= 0: return
+    stop_flags[group_id] = threading.Event()
+    thread = threading.Thread(target=periodic_task_thread, args=(application.bot, group_id, interval, stop_flags[group_id]), daemon=True)
     thread.start()
-    
     scheduled_tasks[group_id] = thread
     logger.info(f"تم بدء المهمة الدورية للمجموعة {group_id} بفاصل زمني {interval} ثانية")
 
 async def stop_periodic_task(application, group_id):
-    """إيقاف مهمة دورية لإرسال رمز المصادقة"""
     if group_id in stop_flags:
         stop_flags[group_id].set()
         if group_id in scheduled_tasks:
-            scheduled_tasks[group_id].join(timeout=1) # إضافة مهلة للانتظار
-            del scheduled_tasks[group_id]
-        del stop_flags[group_id]
-        logger.info(f"تم إيقاف المهمة الدورية للمجموعة {group_id}")
+            thread = scheduled_tasks.pop(group_id)
+            thread.join(timeout=5)
+            if thread.is_alive(): logger.warning(f"الخيط الدوري للمجموعة {group_id} لم ينتهِ بعد المهلة.")
+        if group_id in stop_flags: del stop_flags[group_id]
 
 def periodic_task_thread(bot, group_id, interval, stop_flag):
-    """خيط للمهمة الدورية"""
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    
     while not stop_flag.is_set():
-        try:
-            loop.run_until_complete(send_auth_message(bot, group_id))
-        except Exception as e:
-            logger.error(f"خطأ في خيط المهمة الدورية للمجموعة {group_id}: {e}")
-            # يمكنك إضافة منطق لإعادة المحاولة أو إيقاف المهمة إذا تكررت الأخطاء
-            
-        # انتظار الفاصل الزمني أو حتى يتم تعيين علم الإيقاف
-        # استخدام time.sleep() في خيط منفصل مقبول
-        # لكن تأكد من أن الانتظار لا يمنع الإيقاف السريع
-        wait_interval = 1 # تحقق كل ثانية
-        for _ in range(interval):
-            if stop_flag.is_set():
-                break
-            time.sleep(wait_interval)
-            
+        start_time = time.time()
+        try: loop.run_until_complete(send_auth_message(bot, group_id))
+        except Exception as e: logger.error(f"[Thread-{group_id}] خطأ في خيط المهمة الدورية: {e}", exc_info=True)
+        elapsed_time = time.time() - start_time
+        wait_time = max(0, interval - elapsed_time)
+        check_interval = 1
+        end_wait_time = time.time() + wait_time
+        while time.time() < end_wait_time and not stop_flag.is_set():
+            time.sleep(min(check_interval, end_wait_time - time.time()))
     loop.close()
-    logger.info(f"تم إنهاء خيط المهمة الدورية للمجموعة {group_id}")
+    logger.info(f"[Thread-{group_id}] تم إنهاء خيط المهمة الدورية.")
 
 async def send_auth_message(bot, group_id):
-    """إرسال رسالة المصادقة إلى المجموعة"""
     config = load_config()
-    
-    if group_id not in config["groups"]:
-        logger.error(f"المجموعة {group_id} غير موجودة في الإعدادات عند محاولة إرسال الرسالة")
-        return
+    if group_id not in config.get("groups", {}): return
     
     group_config = config["groups"][group_id]
     totp_secret = group_config.get("totp_secret")
     interval = group_config.get("interval", 600)
     message_style = group_config.get("message_style", 1)
     timezone_name = group_config.get("timezone", "UTC")
-    
-    if not totp_secret:
-        logger.error(f"TOTP_SECRET غير موجود للمجموعة {group_id}")
-        return
-        
-    if interval <= 0:
-        # لا ترسل رسائل إذا كان التكرار متوقفاً (interval=0 أو سالب)
-        return
+    if not totp_secret: return
         
     try:
         totp = pyotp.TOTP(totp_secret)
@@ -1110,103 +1307,77 @@ async def send_auth_message(bot, group_id):
         remaining_validity = get_remaining_validity(totp)
     except Exception as e:
         logger.error(f"خطأ في توليد رمز TOTP للمجموعة {group_id}: {e}")
-        # إرسال رسالة خطأ للمجموعة؟ أو فقط تسجيل الخطأ؟
-        try:
-            await bot.send_message(
-                chat_id=int(group_id),
-                text=f"⚠️ خطأ في توليد رمز المصادقة للمجموعة {group_id}. يرجى مراجعة TOTP_SECRET."
-            )
-        except Exception as send_error:
-            logger.error(f"خطأ في إرسال رسالة خطأ TOTP إلى المجموعة {group_id}: {send_error}")
+        try: await bot.send_message(chat_id=int(group_id), text=_(ADMIN_ID, "error_generating_totp", group_id=group_id)) # استخدام لغة المسؤول الافتراضي للرسائل العامة
+        except Exception as send_error: logger.error(_(ADMIN_ID, "error_sending_totp_error", group_id=group_id, error=str(send_error)))
         return
 
-    
-    # تحضير الرسالة حسب النمط المختار
     current_time = get_time_format(timezone_name)
     next_time = get_next_time(interval, timezone_name)
     interval_text = format_interval(interval)
+    message_text = ""
+    # استخدام لغة المسؤول الافتراضي للرسائل العامة المرسلة للمجموعة
+    if message_style == 1: message_text = _(ADMIN_ID, "auth_message_style1", next_time=next_time)
+    elif message_style == 2: message_text = _(ADMIN_ID, "auth_message_style2", interval_text=interval_text, next_time=next_time)
+    else: message_text = _(ADMIN_ID, "auth_message_style3", interval_text=interval_text, current_time=current_time, next_time=next_time)
     
-    if message_style == 1:
-        message = f"🔐 2FA Verification Code\n\nNext code at: {next_time}"
-    elif message_style == 2:
-        message = f"🔐 2FA Verification Code\n\nNext code in: {interval_text}\n\nNext code at: {next_time}"
-    else:  # message_style == 3
-        message = f"🔐 2FA Verification Code\nNext code in: {interval_text}\nCorrect Time: {current_time}\nNext Code at: {next_time}"
-    
-    # إنشاء زر Copy Code
+    # زر النسخ يجب أن يكون باللغة الإنجليزية غالباً ليكون مفهوماً عالمياً
     keyboard = [[InlineKeyboardButton("Copy Code", callback_data=f"copy_code_{group_id}")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    
     try:
-        # إرسال الرسالة إلى المجموعة
-        await bot.send_message(
-            chat_id=int(group_id),
-            text=message,
-            reply_markup=reply_markup
-        )
-        logger.info(f"تم إرسال رسالة المصادقة إلى المجموعة {group_id}")
+        await bot.send_message(chat_id=int(group_id), text=message_text, reply_markup=reply_markup)
     except Exception as e:
         logger.error(f"خطأ في إرسال رسالة المصادقة إلى المجموعة {group_id}: {str(e)}")
+        if "chat not found" in str(e).lower() or "bot was kicked" in str(e).lower():
+             if group_id in stop_flags: stop_flags[group_id].set()
 
-# وظائف معالجة الأزرار
+# --- وظائف معالجة الأزرار (مع الترجمة) ---
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة النقر على الأزرار"""
     query = update.callback_query
-    await query.answer()
-    
     if query.data.startswith("copy_code_"):
-        # معالجة زر Copy Code
+        await query.answer()
         group_id = query.data.replace("copy_code_", "")
         await handle_copy_code(update, context, group_id)
-    else:
-        # معالجة الأزرار الأخرى (يتم التعامل معها في المحادثة)
-        pass
 
 async def handle_copy_code(update: Update, context: ContextTypes.DEFAULT_TYPE, group_id):
-    """معالجة زر Copy Code"""
     query = update.callback_query
-    user_id = str(query.from_user.id)
+    user = query.from_user
+    user_id = str(user.id)
+    username = user.username or f"{user.first_name} (No Username)"
     
     config = load_config()
     users = load_users()
     
-    if group_id not in config["groups"]:
-        # قد تكون الرسالة قديمة والمجموعة حذفت
-        await query.edit_message_reply_markup(reply_markup=None) # إزالة الزر
-        await query.answer("خطأ: المجموعة لم تعد موجودة. 🤷‍♂️", show_alert=True)
+    if group_id not in config.get("groups", {}):
+        try: await query.edit_message_reply_markup(reply_markup=None)
+        except Exception as e: pass
+        await query.answer(_(user.id, "error_group_does_not_exist"), show_alert=True)
         return
     
-    if user_id in users and users[user_id].get("banned", False):
-        await query.answer("أنت محظور من استخدام هذا البوت. 🚫", show_alert=True)
-        return
-    
-    today = datetime.datetime.now().strftime("%Y-%m-%d")
-    
+    today = datetime.date.today().isoformat()
+    # تحديث بيانات المستخدم وتعيين اللغة إذا لم تكن موجودة
     if user_id not in users:
-        users[user_id] = {"attempts": {}, "banned": False}
-    if "attempts" not in users[user_id]:
-        users[user_id]["attempts"] = {}
-    if group_id not in users[user_id]["attempts"]:
-        # تعيين المحاولات الافتراضية (5)
-        users[user_id]["attempts"][group_id] = {"remaining": 5, "reset_date": today}
+        users[user_id] = {"attempts": {}, "banned": False, "username": username, "language": DEFAULT_LANG}
+    else:
+        users[user_id]["username"] = username
+        if "language" not in users[user_id]: users[user_id]["language"] = DEFAULT_LANG
+        
+    if users[user_id].get("banned", False):
+        await query.answer(_(user.id, "user_banned_from_copy"), show_alert=True)
+        return
     
-    # إعادة تعيين المحاولات إذا كان اليوم مختلفاً
+    default_attempts = config.get("groups", {}).get(group_id, {}).get("default_attempts", 5)
+    
+    if "attempts" not in users[user_id]: users[user_id]["attempts"] = {}
+    if group_id not in users[user_id]["attempts"]:
+        users[user_id]["attempts"][group_id] = {"remaining": default_attempts, "reset_date": today}
+    
     if users[user_id]["attempts"][group_id]["reset_date"] != today:
-        users[user_id]["attempts"][group_id] = {"remaining": 5, "reset_date": today}
+        users[user_id]["attempts"][group_id] = {"remaining": default_attempts, "reset_date": today}
     
     if users[user_id]["attempts"][group_id]["remaining"] <= 0:
-        await query.answer(
-            "⚠️ لقد استنفدت جميع محاولاتك لهذا اليوم! يرجى الانتظار حتى منتصف الليل لإعادة تعيين المحاولات.",
-            show_alert=True
-        )
-        # إشعار المستخدم برسالة خاصة بانتهاء المحاولات
-        try:
-            await context.bot.send_message(
-                chat_id=query.from_user.id,
-                text=f"⚠️ لقد استنفدت محاولاتك لنسخ الرمز من المجموعة {group_id} لهذا اليوم. سيتم إعادة تعيينها غداً."
-            )
-        except Exception as e:
-            logger.warning(f"لم نتمكن من إرسال إشعار انتهاء المحاولات للمستخدم {user_id}: {e}")
+        await query.answer(_(user.id, "attempts_exhausted_alert", default_attempts=default_attempts), show_alert=True)
+        try: await context.bot.send_message(chat_id=user.id, text=_(user.id, "attempts_exhausted_message", group_id=group_id))
+        except Exception as e: pass
         return
     
     users[user_id]["attempts"][group_id]["remaining"] -= 1
@@ -1219,170 +1390,177 @@ async def handle_copy_code(update: Update, context: ContextTypes.DEFAULT_TYPE, g
         remaining_validity = get_remaining_validity(totp)
     except Exception as e:
         logger.error(f"خطأ في توليد رمز TOTP عند النسخ للمجموعة {group_id}: {e}")
-        await query.answer("حدث خطأ أثناء توليد الرمز. 🤯", show_alert=True)
-        # إعادة المحاولة للمستخدم؟
-        users[user_id]["attempts"][group_id]["remaining"] += 1 # استعادة المحاولة
+        await query.answer(_(user.id, "error_generating_code_on_copy"), show_alert=True)
+        users[user_id]["attempts"][group_id]["remaining"] += 1
         save_users(users)
         return
         
     remaining_attempts = users[user_id]["attempts"][group_id]["remaining"]
-    
-    message = (
-        f"🔐 رمز المصادقة الثنائية: `{code}`\n\n"
-        f"⏱ الرمز صالح لمدة {remaining_validity} ثانية فقط\n"
-        f"🔄 المحاولات المتبقية اليوم: {remaining_attempts}"
-    )
+    # استخدام MarkdownV2 يتطلب تهريب الأحرف الخاصة
+    code_escaped = code.replace("`", "\\`")
+    message_text_md2 = _(user.id, "code_copied_alert_md2", code=code_escaped, remaining_validity=remaining_validity, remaining_attempts=remaining_attempts)
+    message_text_md = _(user.id, "code_copied_alert_md", code=code, remaining_validity=remaining_validity, remaining_attempts=remaining_attempts)
     
     try:
-        await context.bot.send_message(
-            chat_id=query.from_user.id,
-            text=message,
-            parse_mode="Markdown"
-        )
-        # إشعار المستخدم في الـ alert بوصول الرسالة الخاصة
-        await query.answer("✅ تم إرسال رمز المصادقة إلى رسائلك الخاصة!", show_alert=True)
+        await query.answer(message_text_md2, show_alert=True, parse_mode=\'MarkdownV2\')
     except Exception as e:
-        logger.error(f"خطأ في إرسال رمز المصادقة إلى المستخدم {user_id}: {str(e)}")
-        await query.answer(
-            "لم نتمكن من إرسال رسالة خاصة. ⚠️ يرجى التأكد من أنك بدأت محادثة مع البوت ولم تقم بحظره.",
-            show_alert=True
-        )
-        # إعادة المحاولة للمستخدم؟
-        users[user_id]["attempts"][group_id]["remaining"] += 1 # استعادة المحاولة
-        save_users(users)
+        logger.warning(f"فشل إرسال الرمز كـ Alert (MarkdownV2): {e}. محاولة Markdown.")
+        try: await query.answer(message_text_md, show_alert=True, parse_mode=\'Markdown\')
+        except Exception as e2:
+            logger.warning(f"فشل إرسال الرمز كـ Alert (Markdown): {e2}. محاولة رسالة عادية.")
+            try: await context.bot.send_message(chat_id=user.id, text=message_text_md, parse_mode=\'Markdown\')
+            except Exception as send_error:
+                 logger.error(f"فشل إرسال الرمز كرسالة للمستخدم {user_id}: {send_error}")
+                 await query.answer(_(user.id, "error_sending_code_alert"), show_alert=True)
+                 users[user_id]["attempts"][group_id]["remaining"] += 1
+                 save_users(users)
 
-# وظيفة بدء البوت والمهام
-async def post_init(application: Application):
-    """بدء المهام الدورية بعد تهيئة التطبيق"""
-    logger.info("البوت قيد التشغيل، بدء المهام الدورية...")
-    config = load_config()
-    for group_id in config["groups"]:
-        await start_periodic_task(application, group_id)
-
+# --- دالة رئيسية وإعداد المحادثة (مع تحديث الحالات للغة) ---
 def main():
-    """النقطة الرئيسية لتشغيل البوت"""
-    # إنشاء تطبيق البوت
-    application = Application.builder().token(TOKEN).post_init(post_init).build()
+    logger.info("بدء تحميل الترجمة...")
+    load_translations()
+    if not translations or (DEFAULT_LANG not in translations and "en" not in translations):
+        logger.critical("فشل تحميل ملفات الترجمة الأساسية. لا يمكن المتابعة.")
+        return
+        
+    logger.info("بدء تحميل الإعدادات والمستخدمين...")
+    load_config()
+    load_users()
+    logger.info("تم تحميل الإعدادات والمستخدمين.")
     
-    # إنشاء محادثة لوحة الإدارة
+    application = Application.builder().token(TOKEN).build()
+    
+    logger.info("بدء تشغيل المهام الدورية للمجموعات الموجودة...")
+    config = load_config()
+    if "groups" in config:
+        for group_id in config["groups"]:
+            asyncio.create_task(start_periodic_task(application, group_id))
+            
+    logger.info("إعداد معالج المحادثة...")
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler("admin", admin_command)],
         states={
             MAIN_MENU: [
-                CallbackQueryHandler(manage_groups, pattern="^manage_groups$"),
-                CallbackQueryHandler(manage_interval, pattern="^manage_interval$"),
-                CallbackQueryHandler(manage_message_style, pattern="^manage_message_style$"),
-                CallbackQueryHandler(manage_user_attempts, pattern="^manage_user_attempts$"),
-                CallbackQueryHandler(manage_admins, pattern="^manage_admins$"),
-                CallbackQueryHandler(cancel, pattern="^cancel$"),
-                CallbackQueryHandler(back_to_main, pattern="^back_to_main$") # التأكد من وجوده هنا
+                CallbackQueryHandler(manage_groups, pattern=\"^manage_groups$\"),
+                CallbackQueryHandler(manage_interval, pattern=\"^manage_interval$\"),
+                CallbackQueryHandler(manage_message_style, pattern=\"^manage_message_style$\"),
+                CallbackQueryHandler(manage_user_attempts, pattern=\"^manage_user_attempts$\"),
+                CallbackQueryHandler(manage_admins, pattern=\"^manage_admins$\"),
+                CallbackQueryHandler(manage_language, pattern=\"^manage_language$\"), # معالج زر اللغة
+                CallbackQueryHandler(cancel, pattern=\"^cancel$\"),
+                CallbackQueryHandler(back_to_main, pattern=\"^back_to_main$\"),
             ],
+            # ... (الحالات الأخرى كما هي مع إضافة حالات اللغة)
             MANAGE_GROUPS: [
-                CallbackQueryHandler(add_group, pattern="^add_group$"),
-                CallbackQueryHandler(delete_group, pattern="^delete_group$"),
-                CallbackQueryHandler(edit_group, pattern="^edit_group$"),
-                CallbackQueryHandler(back_to_main, pattern="^back_to_main$")
+                CallbackQueryHandler(add_group, pattern=\"^add_group$\"),
+                CallbackQueryHandler(delete_group, pattern=\"^delete_group$\"),
+                CallbackQueryHandler(edit_group, pattern=\"^edit_group$\"),
+                CallbackQueryHandler(back_to_main, pattern=\"^back_to_main$\"),
+                CallbackQueryHandler(manage_groups, pattern=\"^manage_groups$\"),
             ],
-            ADD_GROUP: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, process_add_group),
-                CallbackQueryHandler(cancel, pattern="^cancel$") # السماح بالإلغاء
+            ADD_GROUP: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_add_group)],
+            ADD_SECRET: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_add_secret)],
+            CONFIRM_ADD_GROUP: [
+                CallbackQueryHandler(execute_add_group, pattern=\"^confirm_add_group_yes$\"),
+                CallbackQueryHandler(manage_groups, pattern=\"^manage_groups$\"),
             ],
             DELETE_GROUP: [
-                CallbackQueryHandler(process_delete_group, pattern="^del_group_"),
-                CallbackQueryHandler(manage_groups, pattern="^manage_groups$"), # زر العودة في هذه القائمة
-                CallbackQueryHandler(back_to_main, pattern="^back_to_main$") # زر العودة للقائمة الرئيسية
+                CallbackQueryHandler(confirm_delete_group, pattern=\"^confirm_del_group_\"),
+                CallbackQueryHandler(manage_groups, pattern=\"^manage_groups$\"),
+            ],
+            CONFIRM_DELETE_GROUP: [
+                 CallbackQueryHandler(execute_delete_group, pattern=\"^execute_del_group_yes$\"),
+                 CallbackQueryHandler(manage_groups, pattern=\"^manage_groups$\"),
             ],
             EDIT_GROUP: [
-                CallbackQueryHandler(process_edit_group, pattern="^edit_group_"),
-                CallbackQueryHandler(manage_groups, pattern="^manage_groups$"), # زر العودة
-                CallbackQueryHandler(back_to_main, pattern="^back_to_main$")
+                CallbackQueryHandler(process_edit_group, pattern=\"^edit_group_\"),
+                CallbackQueryHandler(manage_groups, pattern=\"^manage_groups$\"),
             ],
-            ADD_SECRET: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, process_add_secret),
-                CallbackQueryHandler(cancel, pattern="^cancel$")
-            ],
-            EDIT_SECRET: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, process_edit_secret),
-                CallbackQueryHandler(cancel, pattern="^cancel$")
-            ],
+            EDIT_SECRET: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_edit_secret)],
             MANAGE_INTERVAL: [
-                CallbackQueryHandler(process_manage_interval, pattern="^interval_"),
-                CallbackQueryHandler(set_interval, pattern="^set_interval_"),
-                CallbackQueryHandler(set_interval, pattern="^stop_interval$"),
-                CallbackQueryHandler(set_interval, pattern="^start_interval$"),
-                CallbackQueryHandler(manage_interval, pattern="^manage_interval$"), # زر العودة في هذه القائمة
-                CallbackQueryHandler(back_to_main, pattern="^back_to_main$")
+                CallbackQueryHandler(process_manage_interval, pattern=\"^interval_\"),
+                CallbackQueryHandler(set_interval, pattern=\"^set_interval_\"),
+                CallbackQueryHandler(back_to_main, pattern=\"^back_to_main$\"),
+                CallbackQueryHandler(manage_interval, pattern=\"^manage_interval$\"),
             ],
             MANAGE_MESSAGE_STYLE: [
-                CallbackQueryHandler(process_manage_message_style, pattern="^style_"),
-                CallbackQueryHandler(set_message_style, pattern="^set_style_"),
-                CallbackQueryHandler(set_message_style, pattern="^set_timezone_"),
-                CallbackQueryHandler(manage_message_style, pattern="^manage_message_style$"), # زر العودة
-                CallbackQueryHandler(back_to_main, pattern="^back_to_main$")
-            ],
-            MANAGE_USER_ATTEMPTS: [
-                CallbackQueryHandler(select_group_for_user, pattern="^select_group_for_user$"),
-                CallbackQueryHandler(back_to_main, pattern="^back_to_main$")
-            ],
-            SELECT_GROUP_FOR_USER: [
-                CallbackQueryHandler(select_user, pattern="^select_users_"),
-                CallbackQueryHandler(manage_user_attempts, pattern="^manage_user_attempts$"), # زر العودة
-                CallbackQueryHandler(back_to_main, pattern="^back_to_main$")
-            ],
-            SELECT_USER: [
-                CallbackQueryHandler(manage_user, pattern="^manage_user_"),
-                CallbackQueryHandler(select_group_for_user, pattern="^select_group_for_user$"), # زر العودة
-                CallbackQueryHandler(back_to_main, pattern="^back_to_main$")
-            ],
-            MANAGE_USER: [
-                CallbackQueryHandler(add_attempts, pattern="^add_attempts$"),
-                CallbackQueryHandler(remove_attempts, pattern="^remove_attempts$"),
-                CallbackQueryHandler(toggle_ban, pattern="^toggle_ban$"),
-                # زر العودة هنا هو select_users_{group_id} الذي يعيد لقائمة اختيار المستخدم
-                CallbackQueryHandler(select_user, pattern="^select_users_"), 
-                CallbackQueryHandler(back_to_main, pattern="^back_to_main$")
-            ],
-            ADD_ATTEMPTS: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, process_add_attempts),
-                CallbackQueryHandler(cancel, pattern="^cancel$")
-            ],
-            REMOVE_ATTEMPTS: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, process_remove_attempts),
-                CallbackQueryHandler(cancel, pattern="^cancel$")
+                CallbackQueryHandler(process_manage_message_style, pattern=\"^style_\"),
+                CallbackQueryHandler(set_message_style, pattern=\"^set_style_\"),
+                CallbackQueryHandler(set_message_style, pattern=\"^set_timezone_\"),
+                CallbackQueryHandler(back_to_main, pattern=\"^back_to_main$\"),
+                CallbackQueryHandler(manage_message_style, pattern=\"^manage_message_style$\"),
             ],
             MANAGE_ADMINS: [
-                CallbackQueryHandler(add_admin, pattern="^add_admin$"),
-                CallbackQueryHandler(remove_admin, pattern="^remove_admin$"),
-                CallbackQueryHandler(manage_admins, pattern="^manage_admins$"), # زر العودة
-                CallbackQueryHandler(back_to_main, pattern="^back_to_main$")
+                CallbackQueryHandler(add_admin, pattern=\"^add_admin$\"),
+                CallbackQueryHandler(remove_admin, pattern=\"^remove_admin$\"),
+                CallbackQueryHandler(back_to_main, pattern=\"^back_to_main$\"),
+                CallbackQueryHandler(manage_admins, pattern=\"^manage_admins$\"),
             ],
-            ADD_ADMIN: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, process_add_admin),
-                CallbackQueryHandler(cancel, pattern="^cancel$")
+            ADD_ADMIN: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_add_admin)],
+            CONFIRM_ADD_ADMIN: [
+                CallbackQueryHandler(execute_add_admin, pattern=\"^confirm_add_admin_yes$\"),
+                CallbackQueryHandler(manage_admins, pattern=\"^manage_admins$\"),
             ],
             REMOVE_ADMIN: [
-                CallbackQueryHandler(process_remove_admin, pattern="^del_admin_"),
-                CallbackQueryHandler(manage_admins, pattern="^manage_admins$"), # زر العودة
-                CallbackQueryHandler(back_to_main, pattern="^back_to_main$")
-            ]
+                CallbackQueryHandler(confirm_remove_admin, pattern=\"^confirm_del_admin_\"),
+                CallbackQueryHandler(manage_admins, pattern=\"^manage_admins$\"),
+            ],
+            CONFIRM_REMOVE_ADMIN: [
+                CallbackQueryHandler(execute_remove_admin, pattern=\"^execute_del_admin_yes$\"),
+                CallbackQueryHandler(manage_admins, pattern=\"^manage_admins$\"),
+            ],
+            MANAGE_USER_ATTEMPTS: [
+                CallbackQueryHandler(select_group_for_user, pattern=\"^select_group_for_user$\"),
+                CallbackQueryHandler(select_group_for_default_attempts, pattern=\"^select_group_default_attempts$\"),
+                CallbackQueryHandler(back_to_main, pattern=\"^back_to_main$\"),
+            ],
+            SELECT_GROUP_FOR_DEFAULT_ATTEMPTS: [
+                CallbackQueryHandler(request_new_default_attempts, pattern=\"^set_default_attempts_\"),
+                CallbackQueryHandler(manage_user_attempts, pattern=\"^manage_user_attempts$\"),
+                CallbackQueryHandler(select_group_for_default_attempts, pattern=\"^select_group_default_attempts$\"),
+            ],
+            SET_DEFAULT_ATTEMPTS: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_set_default_attempts)],
+            SELECT_GROUP_FOR_USER: [
+                CallbackQueryHandler(select_user, pattern=\"^select_users_\"),
+                CallbackQueryHandler(manage_user_attempts, pattern=\"^manage_user_attempts$\"),
+            ],
+            SELECT_USER: [
+                CallbackQueryHandler(manage_user, pattern=\"^manage_user_\"),
+                CallbackQueryHandler(select_group_for_user, pattern=\"^select_group_for_user$\"),
+            ],
+            MANAGE_USER: [
+                CallbackQueryHandler(add_attempts, pattern=\"^add_attempts$\"),
+                CallbackQueryHandler(remove_attempts, pattern=\"^remove_attempts$\"),
+                CallbackQueryHandler(toggle_ban, pattern=\"^toggle_ban$\"),
+                CallbackQueryHandler(select_user, pattern=\"^select_users_\"),
+                CallbackQueryHandler(manage_user, pattern=\"^manage_user_\"),
+            ],
+            ADD_ATTEMPTS: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_add_attempts)],
+            REMOVE_ATTEMPTS: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_remove_attempts)],
+            # --- حالات إدارة اللغة ---
+            SELECT_LANGUAGE: [
+                CallbackQueryHandler(set_language, pattern=\"^set_lang_\"),
+                CallbackQueryHandler(back_to_main, pattern=\"^back_to_main$\"),
+            ],
         },
         fallbacks=[
-            CommandHandler("cancel", cancel), # أمر لإلغاء المحادثة
-            CallbackQueryHandler(cancel, pattern="^cancel$") # زر الإلغاء
-            # يمكنك إضافة معالجات أخرى هنا للتعامل مع مدخلات غير متوقعة
+            CommandHandler("admin", admin_command),
+            CommandHandler("start", start),
+            CallbackQueryHandler(cancel, pattern=\"^cancel$\"),
+            CallbackQueryHandler(back_to_main, pattern=\"^back_to_main$\"),
+            MessageHandler(filters.TEXT & ~filters.COMMAND, lambda update, context: update.message.reply_text(_(update.effective_user.id, "unexpected_input_in_conversation"))),
+            CallbackQueryHandler(lambda update, context: update.callback_query.answer(_(update.effective_user.id, "invalid_button_alert"), show_alert=True)),
         ],
-        per_message=False # الحفاظ على الحالة عبر الرسائل
+        per_message=False
     )
     
-    # إضافة المعالجات
-    application.add_handler(CommandHandler("start", start))
     application.add_handler(conv_handler)
-    # معالج زر النسخ يجب أن يكون خارج المحادثة لأنه يظهر في رسائل المجموعة
-    application.add_handler(CallbackQueryHandler(button_callback, pattern="^copy_code_"))
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CallbackQueryHandler(button_callback, pattern=\"^copy_code_\"))
     
-    # تشغيل البوت
     logger.info("بدء تشغيل البوت...")
     application.run_polling()
 
-if __name__ == "__main__":
+if __name__ == \'__main__\':
     main()
+
