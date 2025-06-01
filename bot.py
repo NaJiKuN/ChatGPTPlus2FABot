@@ -1251,18 +1251,18 @@ async def handle_copy_code(update: Update, context: ContextTypes.DEFAULT_TYPE, g
         users[user_id]["attempts"][group_id]["remaining"] += 1 # استعادة المحاولة
         save_users(users)
 
-# وظيفة بدء البوت والمهام
-async def post_init(application: Application):
-    """بدء المهام الدورية بعد تهيئة التطبيق"""
-    logger.info("البوت قيد التشغيل، بدء المهام الدورية...")
+# وظيفة بدء البوت
+async def start_bot_tasks(application):
+    """بدء المهام الدورية للبوت"""
     config = load_config()
+    
     for group_id in config["groups"]:
         await start_periodic_task(application, group_id)
 
 def main():
     """النقطة الرئيسية لتشغيل البوت"""
     # إنشاء تطبيق البوت
-    application = Application.builder().token(TOKEN).post_init(post_init).build()
+    application = Application.builder().token(TOKEN).build()
     
     # إنشاء محادثة لوحة الإدارة
     conv_handler = ConversationHandler(
@@ -1274,8 +1274,7 @@ def main():
                 CallbackQueryHandler(manage_message_style, pattern="^manage_message_style$"),
                 CallbackQueryHandler(manage_user_attempts, pattern="^manage_user_attempts$"),
                 CallbackQueryHandler(manage_admins, pattern="^manage_admins$"),
-                CallbackQueryHandler(cancel, pattern="^cancel$"),
-                CallbackQueryHandler(back_to_main, pattern="^back_to_main$") # التأكد من وجوده هنا
+                CallbackQueryHandler(cancel, pattern="^cancel$")
             ],
             MANAGE_GROUPS: [
                 CallbackQueryHandler(add_group, pattern="^add_group$"),
@@ -1284,41 +1283,36 @@ def main():
                 CallbackQueryHandler(back_to_main, pattern="^back_to_main$")
             ],
             ADD_GROUP: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, process_add_group),
-                CallbackQueryHandler(cancel, pattern="^cancel$") # السماح بالإلغاء
+                MessageHandler(filters.TEXT & ~filters.COMMAND, process_add_group)
             ],
             DELETE_GROUP: [
                 CallbackQueryHandler(process_delete_group, pattern="^del_group_"),
-                CallbackQueryHandler(manage_groups, pattern="^manage_groups$"), # زر العودة في هذه القائمة
-                CallbackQueryHandler(back_to_main, pattern="^back_to_main$") # زر العودة للقائمة الرئيسية
+                CallbackQueryHandler(manage_groups, pattern="^manage_groups$")
             ],
             EDIT_GROUP: [
                 CallbackQueryHandler(process_edit_group, pattern="^edit_group_"),
-                CallbackQueryHandler(manage_groups, pattern="^manage_groups$"), # زر العودة
-                CallbackQueryHandler(back_to_main, pattern="^back_to_main$")
+                CallbackQueryHandler(manage_groups, pattern="^manage_groups$")
             ],
             ADD_SECRET: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, process_add_secret),
-                CallbackQueryHandler(cancel, pattern="^cancel$")
+                MessageHandler(filters.TEXT & ~filters.COMMAND, process_add_secret)
             ],
             EDIT_SECRET: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, process_edit_secret),
-                CallbackQueryHandler(cancel, pattern="^cancel$")
+                MessageHandler(filters.TEXT & ~filters.COMMAND, process_edit_secret)
             ],
             MANAGE_INTERVAL: [
                 CallbackQueryHandler(process_manage_interval, pattern="^interval_"),
                 CallbackQueryHandler(set_interval, pattern="^set_interval_"),
                 CallbackQueryHandler(set_interval, pattern="^stop_interval$"),
                 CallbackQueryHandler(set_interval, pattern="^start_interval$"),
-                CallbackQueryHandler(manage_interval, pattern="^manage_interval$"), # زر العودة في هذه القائمة
-                CallbackQueryHandler(back_to_main, pattern="^back_to_main$")
+                CallbackQueryHandler(back_to_main, pattern="^back_to_main$"),
+                CallbackQueryHandler(manage_interval, pattern="^manage_interval$")
             ],
             MANAGE_MESSAGE_STYLE: [
                 CallbackQueryHandler(process_manage_message_style, pattern="^style_"),
                 CallbackQueryHandler(set_message_style, pattern="^set_style_"),
                 CallbackQueryHandler(set_message_style, pattern="^set_timezone_"),
-                CallbackQueryHandler(manage_message_style, pattern="^manage_message_style$"), # زر العودة
-                CallbackQueryHandler(back_to_main, pattern="^back_to_main$")
+                CallbackQueryHandler(back_to_main, pattern="^back_to_main$"),
+                CallbackQueryHandler(manage_message_style, pattern="^manage_message_style$")
             ],
             MANAGE_USER_ATTEMPTS: [
                 CallbackQueryHandler(select_group_for_user, pattern="^select_group_for_user$"),
@@ -1326,62 +1320,49 @@ def main():
             ],
             SELECT_GROUP_FOR_USER: [
                 CallbackQueryHandler(select_user, pattern="^select_users_"),
-                CallbackQueryHandler(manage_user_attempts, pattern="^manage_user_attempts$"), # زر العودة
-                CallbackQueryHandler(back_to_main, pattern="^back_to_main$")
+                CallbackQueryHandler(manage_user_attempts, pattern="^manage_user_attempts$")
             ],
             SELECT_USER: [
                 CallbackQueryHandler(manage_user, pattern="^manage_user_"),
-                CallbackQueryHandler(select_group_for_user, pattern="^select_group_for_user$"), # زر العودة
-                CallbackQueryHandler(back_to_main, pattern="^back_to_main$")
+                CallbackQueryHandler(select_group_for_user, pattern="^select_group_for_user$")
             ],
             MANAGE_USER: [
                 CallbackQueryHandler(add_attempts, pattern="^add_attempts$"),
                 CallbackQueryHandler(remove_attempts, pattern="^remove_attempts$"),
                 CallbackQueryHandler(toggle_ban, pattern="^toggle_ban$"),
-                # زر العودة هنا هو select_users_{group_id} الذي يعيد لقائمة اختيار المستخدم
-                CallbackQueryHandler(select_user, pattern="^select_users_"), 
-                CallbackQueryHandler(back_to_main, pattern="^back_to_main$")
+                CallbackQueryHandler(select_user, pattern="^select_users_")
             ],
             ADD_ATTEMPTS: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, process_add_attempts),
-                CallbackQueryHandler(cancel, pattern="^cancel$")
+                MessageHandler(filters.TEXT & ~filters.COMMAND, process_add_attempts)
             ],
             REMOVE_ATTEMPTS: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, process_remove_attempts),
-                CallbackQueryHandler(cancel, pattern="^cancel$")
+                MessageHandler(filters.TEXT & ~filters.COMMAND, process_remove_attempts)
             ],
             MANAGE_ADMINS: [
                 CallbackQueryHandler(add_admin, pattern="^add_admin$"),
                 CallbackQueryHandler(remove_admin, pattern="^remove_admin$"),
-                CallbackQueryHandler(manage_admins, pattern="^manage_admins$"), # زر العودة
                 CallbackQueryHandler(back_to_main, pattern="^back_to_main$")
             ],
             ADD_ADMIN: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, process_add_admin),
-                CallbackQueryHandler(cancel, pattern="^cancel$")
+                MessageHandler(filters.TEXT & ~filters.COMMAND, process_add_admin)
             ],
             REMOVE_ADMIN: [
                 CallbackQueryHandler(process_remove_admin, pattern="^del_admin_"),
-                CallbackQueryHandler(manage_admins, pattern="^manage_admins$"), # زر العودة
-                CallbackQueryHandler(back_to_main, pattern="^back_to_main$")
+                CallbackQueryHandler(manage_admins, pattern="^manage_admins$")
             ]
         },
-        fallbacks=[
-            CommandHandler("cancel", cancel), # أمر لإلغاء المحادثة
-            CallbackQueryHandler(cancel, pattern="^cancel$") # زر الإلغاء
-            # يمكنك إضافة معالجات أخرى هنا للتعامل مع مدخلات غير متوقعة
-        ],
-        per_message=False # الحفاظ على الحالة عبر الرسائل
+        fallbacks=[CommandHandler("cancel", cancel)]
     )
     
     # إضافة المعالجات
     application.add_handler(CommandHandler("start", start))
     application.add_handler(conv_handler)
-    # معالج زر النسخ يجب أن يكون خارج المحادثة لأنه يظهر في رسائل المجموعة
-    application.add_handler(CallbackQueryHandler(button_callback, pattern="^copy_code_"))
+    application.add_handler(CallbackQueryHandler(button_callback))
+    
+    # بدء المهام الدورية
+    application.job_queue.run_once(start_bot_tasks, 0)
     
     # تشغيل البوت
-    logger.info("بدء تشغيل البوت...")
     application.run_polling()
 
 if __name__ == "__main__":
